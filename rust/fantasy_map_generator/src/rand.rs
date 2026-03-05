@@ -60,15 +60,25 @@ mod tests {
 
     #[test]
     fn test_glibc_rand_sequence() {
+        // Verify exact glibc rand() values match C reference implementation
+        // Reference: srand(42), skip 1000, then read 5 values
+        // Verified against: gcc -o test_rand test_rand.c && ./test_rand
         let mut rng = GlibcRand::new(42);
         for _ in 0..1000 {
             rng.rand();
         }
-        let v = rng.rand();
-        assert!(v >= 0 && v <= 0x7fffffff, "rand out of range: {}", v);
-        // Verify seed=0 doesn't produce all zeros (glibc treats seed=0 as seed=1)
+        assert_eq!(rng.rand(), 1963050744, "rand()[1000] mismatch");
+        assert_eq!(rng.rand(), 30553106,   "rand()[1001] mismatch");
+        assert_eq!(rng.rand(), 957990501,  "rand()[1002] mismatch");
+        assert_eq!(rng.rand(), 953383689,  "rand()[1003] mismatch");
+        assert_eq!(rng.rand(), 348269264,  "rand()[1004] mismatch");
+    }
+
+    #[test]
+    fn test_glibc_rand_seed_zero_treated_as_one() {
+        // glibc treats seed=0 as seed=1
         let mut rng0 = GlibcRand::new(0);
-        let v0 = rng0.rand();
-        assert_ne!(v0, 0, "seed=0 should not produce zero rand values");
+        let mut rng1 = GlibcRand::new(1);
+        assert_eq!(rng0.rand(), rng1.rand(), "seed=0 should equal seed=1");
     }
 }

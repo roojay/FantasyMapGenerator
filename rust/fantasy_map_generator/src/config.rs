@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(name = "map_generation", about = "Fantasy Map Generator")]
 pub struct Config {
     /// Random seed
-    #[arg(long, default_value = "0")]
+    #[arg(long, short = 's', default_value = "0")]
     pub seed: u32,
 
     /// Use current time as seed
@@ -16,27 +16,27 @@ pub struct Config {
     pub output: String,
 
     /// Resolution (poisson disc sampling distance)
-    #[arg(long, default_value = "0.45")]
+    #[arg(long, short = 'r', default_value = "0.08")]
     pub resolution: f64,
 
     /// Erosion amount (-1 for random)
-    #[arg(long, default_value = "-1.0")]
+    #[arg(long, short = 'e', default_value = "-1.0")]
     pub erosion_amount: f64,
 
     /// Erosion iterations
-    #[arg(long, default_value = "5")]
+    #[arg(long, default_value = "3")]
     pub erosion_steps: i32,
 
     /// Number of cities (-1 for random)
-    #[arg(long, default_value = "-1")]
+    #[arg(long, short = 'c', default_value = "-1")]
     pub cities: i32,
 
     /// Number of towns (-1 for random)
-    #[arg(long, default_value = "-1")]
+    #[arg(long, short = 't', default_value = "-1")]
     pub towns: i32,
 
-    /// Image size (e.g. "1920x1080")
-    #[arg(long, default_value = "1920x1080")]
+    /// Image size (e.g. "1920:1080")
+    #[arg(long, default_value = "1920:1080")]
     pub size: String,
 
     /// Draw scale
@@ -74,11 +74,21 @@ pub struct Config {
     /// Disable area labels
     #[arg(long, default_value = "false")]
     pub no_arealabels: bool,
+
+    /// Show drawing support info and exit
+    #[arg(long, default_value = "false")]
+    pub drawing_supported: bool,
+
+    /// Enable verbose output
+    #[arg(long, short = 'v', default_value = "false")]
+    pub verbose: bool,
 }
 
 impl Config {
     pub fn image_size(&self) -> (u32, u32) {
-        let parts: Vec<&str> = self.size.split('x').collect();
+        // Support both colon separator (C++ compat: "1920:1080") and x separator ("1920x1080")
+        let sep = if self.size.contains(':') { ':' } else { 'x' };
+        let parts: Vec<&str> = self.size.split(sep).collect();
         if parts.len() == 2 {
             let w = parts[0].parse().unwrap_or(1920);
             let h = parts[1].parse().unwrap_or(1080);
