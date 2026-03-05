@@ -892,13 +892,20 @@ impl MapGenerator {
         let paths = self.get_river_paths();
         let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
         let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
+        let factor = self.river_smoothing_factor;
         paths.iter().map(|path| {
-            let smooth = smooth_path(path, self.river_smoothing_factor);
-            let mut out = Vec::with_capacity(smooth.len() * 2);
-            for &vidx in &smooth {
+            let raw: Vec<(f64, f64)> = path.iter().map(|&vidx| {
                 let v = self.vertex_map.vertices[vidx];
-                out.push((v.position.x - self.extents.minx) * inv_w);
-                out.push((v.position.y - self.extents.miny) * inv_h);
+                (
+                    (v.position.x - self.extents.minx) * inv_w,
+                    (v.position.y - self.extents.miny) * inv_h,
+                )
+            }).collect();
+            let smooth = smooth_positions(raw, factor);
+            let mut out = Vec::with_capacity(smooth.len() * 2);
+            for (x, y) in smooth {
+                out.push(x);
+                out.push(y);
             }
             out
         }).collect()
@@ -1170,13 +1177,20 @@ impl MapGenerator {
         let borders = self.get_territory_borders();
         let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
         let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
+        let factor = 0.5f64;
         borders.iter().map(|path| {
-            let smooth = smooth_path(path, 0.5);
-            let mut out = Vec::with_capacity(smooth.len() * 2);
-            for &vidx in &smooth {
+            let raw: Vec<(f64, f64)> = path.iter().map(|&vidx| {
                 let v = self.vertex_map.vertices[vidx];
-                out.push((v.position.x - self.extents.minx) * inv_w);
-                out.push((v.position.y - self.extents.miny) * inv_h);
+                (
+                    (v.position.x - self.extents.minx) * inv_w,
+                    (v.position.y - self.extents.miny) * inv_h,
+                )
+            }).collect();
+            let smooth = smooth_positions(raw, factor);
+            let mut out = Vec::with_capacity(smooth.len() * 2);
+            for (x, y) in smooth {
+                out.push(x);
+                out.push(y);
             }
             out
         }).collect()
@@ -2040,8 +2054,23 @@ fn extents_overlap(a: Extents2d, b: Extents2d) -> bool {
     a.minx < b.maxx && a.maxx > b.minx && a.miny < b.maxy && a.maxy > b.miny
 }
 
-fn smooth_path(path: &[usize], factor: f64) -> Vec<usize> {
-    path.to_vec() // smoothing requires vertex positions; we return indices here, position smoothing done in draw data
+/// Smooths a sequence of (x, y) positions using a Laplacian filter:
+/// v1 = (1-factor)*v1 + factor*0.5*(v0 + v2)
+fn smooth_positions(positions: Vec<(f64, f64)>, factor: f64) -> Vec<(f64, f64)> {
+    if positions.len() < 3 {
+        return positions;
+    }
+    let mut out = positions.clone();
+    for i in 1..positions.len() - 1 {
+        let (x0, y0) = positions[i - 1];
+        let (x1, y1) = positions[i];
+        let (x2, y2) = positions[i + 1];
+        out[i] = (
+            (1.0 - factor) * x1 + factor * 0.5 * (x0 + x2),
+            (1.0 - factor) * y1 + factor * 0.5 * (y0 + y2),
+        );
+    }
+    out
 }
 
 fn get_label_point_count(c: &LabelCandidate, grid: &SpatialPointGrid) -> usize {

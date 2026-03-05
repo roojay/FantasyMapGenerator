@@ -128,7 +128,7 @@ fn initialize_heightmap(map: &mut MapGenerator) {
 
     let n = map.rng_mut().random_double(100.0, 250.0) as i32;
     for _ in 0..n {
-        let px = map.rng_mut().random_double(expanded.minx, expanded.maxx);
+        let _px_discard = map.rng_mut().random_double(expanded.minx, expanded.maxx);
         let px = map.rng_mut().random_double(expanded.minx, expanded.maxx);
         let py = map.rng_mut().random_double(expanded.miny, expanded.maxy);
         let r = map.rng_mut().random_double(1.0, 8.0);
@@ -141,7 +141,7 @@ fn initialize_heightmap(map: &mut MapGenerator) {
     }
 
     if map.rng_mut().random_double(0.0, 1.0) > 0.5 {
-        let px = map.rng_mut().random_double(expanded.minx, expanded.maxx);
+        let _px_discard = map.rng_mut().random_double(expanded.minx, expanded.maxx);
         let px = map.rng_mut().random_double(expanded.minx, expanded.maxx);
         let py = map.rng_mut().random_double(expanded.miny, expanded.maxy);
         let r = map.rng_mut().random_double(6.0, 12.0);
@@ -153,7 +153,7 @@ fn initialize_heightmap(map: &mut MapGenerator) {
         let angle = map.rng_mut().random_double(0.0, 2.0 * std::f64::consts::PI);
         let dir_x = angle.sin();
         let dir_y = angle.cos();
-        let lx = map.rng_mut().random_double(extents.minx, extents.maxx);
+        let _lx_discard = map.rng_mut().random_double(extents.minx, extents.maxx);
         let lx = map.rng_mut().random_double(extents.minx, extents.maxx);
         let ly = map.rng_mut().random_double(extents.miny, extents.maxy);
         let slope_width = map.rng_mut().random_double(0.5, 5.0);
