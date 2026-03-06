@@ -1,0 +1,59 @@
+Generating map with seed value: 12345
+
+Initializing map generator...
+	Generating poisson disc samples...
+	Finished generating 72180 poisson disc samples in 0.274516 seconds.
+
+	Computing Delaunay triangulation of 72180 points...
+	Finished computing triangulation in 1.35349 seconds.
+
+	Computing Voronoi diagram from delaunay triangulation...
+	Finished computing Voronoi diagram in 0.117666 seconds.
+
+	Initializing map data...
+	Finished initializing map data in 0.054806 seconds.
+Finished initializing map generator in 1.80139 seconds.
+
+Initializing height map...
+Finished initializing height map in 0.051522 seconds.
+
+Eroding height map by 0.33184 over 3 iterations...
+	Completed erosion step 1/3 in 0.218928 seconds.
+	Completed erosion step 2/3 in 0.228748 seconds.
+	Completed erosion step 3/3 in 0.265236 seconds.
+Finished eroding height map in 0.723781 seconds.
+
+Generating 5 cities...
+	Added city 1/5' to map in 0.0815299 seconds (Niafunke, Markala).
+	Added city 2/5' to map in 0.0624399 seconds (Menaka, Koulikoro).
+	Added city 3/5' to map in 0.065068 seconds (Bandiagara, Kinmparana).
+	Added city 4/5' to map in 0.065932 seconds (Kokofata, Gao).
+	Added city 5/5' to map in 0.0644891 seconds (Kati, Kolokani).
+Finished generating cities in 0.339645 seconds.
+
+Generating 16 towns...
+	Added town 1/16' to map in 0.0445578 seconds (Banamba).
+	Added town 2/16' to map in 0.03982 seconds (Goundam).
+	Added town 3/16' to map in 0.0406759 seconds (Ntossoni).
+	Added town 4/16' to map in 0.043426 seconds (Bougouni).
+	Added town 5/16' to map in 0.043335 seconds (Mopti).
+	Added town 6/16' to map in 0.0422971 seconds (Kolondieba).
+	Added town 7/16' to map in 0.0440149 seconds (Sagalo).
+	Added town 8/16' to map in 0.0440941 seconds (San).
+	Added town 9/16' to map in 0.0431991 seconds (Douentza).
+	Added town 10/16' to map in 0.0439219 seconds (Timbuktu).
+	Added town 11/16' to map in 0.044558 seconds (Kita).
+	Added town 12/16' to map in 0.0471721 seconds (Bamako).
+	Added town 13/16' to map in 0.0483718 seconds (Kidal).
+	Added town 14/16' to map in 0.0499201 seconds (Ke-Macina).
+	Added town 15/16' to map in 0.0512278 seconds (Tenenkou).
+	Added town 16/16' to map in 0.0544639 seconds (Kangaba).
+Finished generating towns in 0.72557 seconds.
+
+Generating map draw data...
+Finished Generating map draw data in 0.159405 seconds.
+
+Project build without drawing support. Install Python and the Pycairo graphics library (http://cairographics.org/pycairo/) to enable drawing support.
+Wrote map draw data to file: /home/runner/work/FantasyMapGenerator/FantasyMapGenerator/baseline/reference.json
+
+Finished generating map in 3.81184 seconds.
