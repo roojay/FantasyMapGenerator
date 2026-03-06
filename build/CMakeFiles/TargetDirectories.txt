@@ -1,4 +1,0 @@
-/home/runner/work/FantasyMapGenerator/FantasyMapGenerator/build/CMakeFiles/objects.dir
-/home/runner/work/FantasyMapGenerator/FantasyMapGenerator/build/CMakeFiles/map_generation.dir
-/home/runner/work/FantasyMapGenerator/FantasyMapGenerator/build/CMakeFiles/edit_cache.dir
-/home/runner/work/FantasyMapGenerator/FantasyMapGenerator/build/CMakeFiles/rebuild_cache.dir
