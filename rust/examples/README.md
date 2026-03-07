@@ -1,57 +1,35 @@
-# 示例输出目录
+# Fantasy Map Generator Web Demo
 
-此目录用于存放地图生成器的输出文件。
+网页示例已重构为 `pnpm + Vite + React + TypeScript + Tailwind CSS + Mantine` 技术栈，并补齐了暗色模式与中英文国际化支持。
 
-## 文件类型
-
-- `*.json` - 地图绘图数据（JSON 格式）
-- `*.png` - 渲染后的地图图像
-
-## 使用方法
-
-### 生成示例地图
+## 开发
 
 ```bash
-# 使用默认输出路径（examples/output）
-cargo run --release --features render -- --seed 12345
-
-# 自定义输出文件名
-cargo run --release --features render -- --seed 12345 --output examples/my_map
-
-# 不同的种子生成不同的地图
-cargo run --release --features render -- --seed 54321 --output examples/map_54321
+pnpm install
+pnpm dev
 ```
 
-### 查看生成的文件
+## 构建
 
 ```bash
-# 列出所有生成的文件
-ls examples/
-
-# 查看 JSON 数据
-cat examples/output.json
-
-# 打开 PNG 图像
-# Windows: start examples/output.png
-# Linux: xdg-open examples/output.png
-# macOS: open examples/output.png
+pnpm build
+pnpm preview
 ```
 
-## 注意事项
+## 重新构建 WASM
 
-- 此目录中的 `.json` 和 `.png` 文件会被 git 忽略
-- 建议定期清理不需要的输出文件
-- 输出文件名会自动添加扩展名（.json 和 .png）
-
-## 清理输出
+修改 Rust 代码后，在 `rust/` 目录执行：
 
 ```bash
-# 删除所有 JSON 文件
-rm examples/*.json
-
-# 删除所有 PNG 文件
-rm examples/*.png
-
-# 删除所有输出文件
-rm examples/*.json examples/*.png
+./build-wasm.sh
+# 或 build-wasm.bat
 ```
+
+## 主要能力
+
+- React 组件化控制面板、状态栏与地图视图
+- Mantine 主题 + CSS Variables + Tailwind 协同样式
+- 深色 / 浅色模式切换并持久化
+- 中英文界面切换并持久化
+- WebGPU / WebGL / Canvas / SVG 多后端渲染
+- JSON / PNG / SVG 导入导出

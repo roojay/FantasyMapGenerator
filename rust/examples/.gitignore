@@ -1,0 +1,11 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+
+# TypeScript and tooling caches
+*.tsbuildinfo
+
+# Local backup files
+index-old.html
+temp_*.js
+temp_*.txt

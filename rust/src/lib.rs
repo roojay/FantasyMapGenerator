@@ -120,6 +120,10 @@ pub mod cli;
 #[cfg(feature = "render")]
 pub mod render;
 
+/// WASM 绑定模块（需要 wasm feature）
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 // ===================================
 // 便捷的重导出
 // ===================================

@@ -1,0 +1,141 @@
+@import "tailwindcss";
+@import "inter-ui/inter.css";
+
+:root {
+  color-scheme: light;
+  --app-bg: 248 250 252;
+  --app-surface: 255 255 255;
+  --app-elevated: 255 255 255;
+  --app-text: 15 23 42;
+  --app-muted: 100 116 139;
+  --app-border: 226 232 240;
+}
+
+[data-mantine-color-scheme="dark"] {
+  color-scheme: dark;
+  --app-bg: 10 14 23;
+  --app-surface: 18 24 38;
+  --app-elevated: 22 30 46;
+  --app-text: 241 245 249;
+  --app-muted: 148 163 184;
+  --app-border: 39 52 69;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: rgb(var(--app-text));
+  background: rgb(var(--app-bg));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Map canvas styles */
+.map-stage > canvas,
+.map-stage > svg {
+  display: block;
+}
+
+.map-viewport {
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  cursor: grab;
+}
+
+.is-panning .map-viewport {
+  cursor: grabbing;
+}
+
+.map-pan-layer {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-origin: 0 0;
+  contain: layout paint style;
+}
+
+::selection {
+  background: rgba(var(--app-accent), 0.24);
+}
+
+/* Custom scrollbar for sidebar */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(var(--app-muted), 0.3);
+  border-radius: 2px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--app-muted), 0.5);
+}
+
+/* Force cursor pointer on all interactive elements */
+button,
+[role="button"],
+[type="button"],
+[type="submit"],
+.mantine-Checkbox-root,
+.mantine-Checkbox-label,
+.mantine-Checkbox-input,
+.mantine-ActionIcon-root,
+.mantine-Button-root,
+.mantine-Menu-item {
+  cursor: pointer !important;
+}
+
+/* Status indicator breathing animation */
+@keyframes breathing {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.95);
+  }
+}
+
+.status-breathing {
+  animation: breathing 2s ease-in-out infinite;
+}
+
+/* Loading overlay fade in */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.loading-overlay {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Spinner rotation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-spinner {
+  animation: spin 1s linear infinite;
+}

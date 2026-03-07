@@ -1,0 +1,15 @@
+{
+  "name": "fantasy_map_generator",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "fantasy_map_generator_bg.wasm",
+    "fantasy_map_generator.js",
+    "fantasy_map_generator.d.ts"
+  ],
+  "main": "fantasy_map_generator.js",
+  "types": "fantasy_map_generator.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

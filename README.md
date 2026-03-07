@@ -14,37 +14,49 @@
    - Better performance and memory safety
    - See [Rust README](rust/README.md)
 
-2. **📁 Improved Project Structure**
+2. **🌐 WebAssembly Support**
+   - Run in browser without installation
+   - Interactive map generation with live preview
+   - Export JSON/PNG/SVG
+   - **Quick start**: `cd rust/examples && npx serve`
+   - See [WASM Guide](rust/QUICKSTART.md)
+
+3. **📁 Improved Project Structure**
    - Organized directory layout following best practices
    - Separated Rust and C++ implementations
    - Better dependency management
 
-3. **🔧 Enhanced Build System**
+4. **🔧 Enhanced Build System**
    - Simplified build process with Cargo (Rust)
    - Cross-platform support (Linux/Mac/Windows)
    - Modern tooling and testing
    - Dedicated build scripts: `build_rust.sh/bat` and `build_cpp.sh/bat`
 
-4. **📚 Comprehensive Documentation**
+5. **📚 Comprehensive Documentation**
    - Detailed Rust implementation guide
    - Project structure documentation
    - Quick start guides
 
-### 🚀 Quick Start (Rust)
+### 🚀 Quick Start
 
+**Browser (Recommended - No Build Required)**
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd FantasyMapGenerator/rust
+cd rust/examples
+npx serve
+# Open browser to displayed URL
+```
 
-# Build and run
+**Rust CLI**
+```bash
+cd rust
 cargo run --release --features render -- --seed 12345
+# Output in rust/examples/
+```
 
-# Or use the build script
-# Linux/Mac: ./scripts/build_rust.sh
-# Windows: .\scripts\build_rust.bat
-
-# Output files will be in rust/examples/ directory
+**C++ (Original)**
+```bash
+./scripts/build_cpp.sh  # or build_cpp.bat on Windows
+./build/FantasyMapGenerator --seed 12345
 ```
 
 ### 🔄 Changes from Original
