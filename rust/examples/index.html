@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Map Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #controls {
+            background: #2a2a2a;
+            padding: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            flex-wrap: wrap;
+        }
+        
+        #controls input[type="file"] {
+            padding: 8px 15px;
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+        }
+        
+        #controls select {
+            padding: 8px 15px;
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        #controls select:disabled {
+            background: #2a2a2a;
+            color: #666;
+            cursor: not-allowed;
+        }
+        
+        #controls button {
+            padding: 8px 20px;
+            background: #0066cc;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        #controls button:hover:not(:disabled) {
+            background: #0052a3;
+        }
+        
+        #controls button:disabled {
+            background: #4a4a4a;
+            cursor: not-allowed;
+        }
+        
+        #controls .divider {
+            width: 1px;
+            height: 30px;
+            background: #4a4a4a;
+        }
+        
+        #status {
+            color: #888;
+            font-size: 14px;
+            flex: 1;
+        }
+        
+        .renderer-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .renderer-badge.webgpu {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .renderer-badge.webgl {
+            background: #2196F3;
+            color: white;
+        }
+        
+        .renderer-badge.canvas {
+            background: #FF9800;
+            color: white;
+        }
+        
+        .renderer-badge.svg {
+            background: #9C27B0;
+            color: white;
+        }
+        
+        #canvasContainer {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+            background: #0a0a0a;
+            padding: 20px;
+        }
+        
+        canvas, #canvasContainer svg {
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            max-width: 100%;
+            max-height: 100%;
+            width: auto !important;
+            height: auto !important;
+            display: block;
+        }
+        
+        canvas {
+            image-rendering: crisp-edges;
+        }
+        
+        #error {
+            color: #ff4444;
+            padding: 15px;
+            background: #3a1a1a;
+            border-left: 4px solid #ff4444;
+            margin: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="file" id="fileInput" accept=".json">
+        <div class="divider"></div>
+        <label for="rendererSelect" style="color: #aaa; font-size: 14px;">Renderer:</label>
+        <select id="rendererSelect">
+            <option value="auto">Auto (Best Available)</option>
+            <option value="webgpu">WebGPU</option>
+            <option value="webgl">WebGL</option>
+            <option value="canvas">Canvas 2D</option>
+            <option value="svg">SVG</option>
+        </select>
+        <div class="divider"></div>
+        <button id="exportBtn" disabled>Export PNG</button>
+        <button id="exportSvgBtn" disabled>Export SVG</button>
+        <span id="status">Load test-map.json to begin</span>
+    </div>
+    
+    <div id="error"></div>
+    
+    <div id="canvasContainer">
+        <canvas id="mapCanvas"></canvas>
+    </div>
+
+    <script>
+// Fantasy Map Renderer with WebGPU > WebGL > Canvas fallback
+
+class MapRenderer {
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.renderMode = null; // 'webgpu', 'webgl', 'canvas', or 'svg'
+        this.availableModes = []; // List of supported modes
+        this.device = null;
+        this.context = null;
+        this.mapData = null;
+        
+        // Colors matching Python implementation
+        this.BACKGROUND_RGBA = [1, 1, 1, 1];
+        this.SLOPE_RGBA = [0, 0, 0, 0.75];
+        this.RIVER_RGBA = [0, 0, 0, 1];
+        this.CONTOUR_RGBA = [0, 0, 0, 1];
+        this.BORDER_RGBA = [0, 0, 0, 1];
+        this.CITY_MARKER_RGBA = [0, 0, 0, 1];
+        this.TOWN_MARKER_RGBA = [0, 0, 0, 1];
+        this.TEXT_RGBA = [0, 0, 0, 1];
+        
+        // Line widths and sizes
+        this.SLOPE_LINE_WIDTH = 1.0;
+        this.RIVER_LINE_WIDTH = 2.5;
+        this.CONTOUR_LINE_WIDTH = 1.5;
+        this.BORDER_LINE_WIDTH = 6.0;
+        this.BORDER_DASH_PATTERN = [3, 4];
+        
+        this.CITY_MARKER_OUTER_RADIUS = 10;
+        this.CITY_MARKER_INNER_RADIUS = 5;
+        this.TOWN_MARKER_RADIUS = 5;
+    }
+
+    async detectAvailableModes() {
+        this.availableModes = [];
+        
+        // Check WebGPU
+        if (await this.canUseWebGPU()) {
+            this.availableModes.push('webgpu');
+        }
+        
+        // Check WebGL
+        if (this.canUseWebGL()) {
+            this.availableModes.push('webgl');
+        }
+        
+        // Check Canvas 2D
+        if (this.canUseCanvas()) {
+            this.availableModes.push('canvas');
+        }
+        
+        // SVG is always available
+        this.availableModes.push('svg');
+        
+        console.log('Available rendering modes:', this.availableModes);
+        return this.availableModes;
+    }
+
+    async canUseWebGPU() {
+        try {
+            if (!navigator.gpu) return false;
+            const adapter = await navigator.gpu.requestAdapter();
+            return !!adapter;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    canUseWebGL() {
+        try {
+            const testCanvas = document.createElement('canvas');
+            const gl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
+            return !!gl;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    canUseCanvas() {
+        try {
+            const testCanvas = document.createElement('canvas');
+            const ctx = testCanvas.getContext('2d');
+            return !!ctx;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async initialize(preferredMode = 'auto') {
+        await this.detectAvailableModes();
+        
+        if (preferredMode === 'auto') {
+            // Auto mode: try in order of preference
+            for (const mode of this.availableModes) {
+                if (await this.initializeMode(mode)) {
+                    return mode;
+                }
+            }
+        } else {
+            // User selected specific mode
+            if (!this.availableModes.includes(preferredMode)) {
+                throw new Error(`${preferredMode} is not available on this browser`);
+            }
+            if (await this.initializeMode(preferredMode)) {
+                return preferredMode;
+            }
+        }
+        
+        throw new Error('No rendering backend available');
+    }
+
+    async initializeMode(mode) {
+        switch (mode) {
+            case 'webgpu':
+                return await this.tryInitWebGPU();
+            case 'webgl':
+                return this.tryInitWebGL();
+            case 'canvas':
+                return this.tryInitCanvas();
+            case 'svg':
+                return this.tryInitSVG();
+            default:
+                return false;
+        }
+    }
+
+    async tryInitWebGPU() {
+        try {
+            if (!navigator.gpu) {
+                return false;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                return false;
+            }
+
+            // Clean up old device if exists
+            if (this.device) {
+                this.device.destroy();
+            }
+
+            this.device = await adapter.requestDevice();
+            this.context = this.canvas.getContext('webgpu');
+            
+            const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+            this.context.configure({
+                device: this.device,
+                format: presentationFormat,
+                alphaMode: 'opaque',
+            });
+
+            this.renderMode = 'webgpu';
+            console.log('WebGPU initialized');
+            return true;
+        } catch (error) {
+            console.warn('WebGPU initialization failed:', error);
+            return false;
+        }
+    }
+
+    tryInitWebGL() {
+        try {
+            // Get fresh context
+            this.context = this.canvas.getContext('webgl2', { preserveDrawingBuffer: true }) || 
+                          this.canvas.getContext('webgl', { preserveDrawingBuffer: true });
+            if (!this.context) {
+                return false;
+            }
+            this.renderMode = 'webgl';
+            console.log('WebGL initialized');
+            return true;
+        } catch (error) {
+            console.warn('WebGL initialization failed:', error);
+            return false;
+        }
+    }
+
+    tryInitCanvas() {
+        try {
+            this.context = this.canvas.getContext('2d', { alpha: false });
+            if (!this.context) {
+                return false;
+            }
+            this.renderMode = 'canvas';
+            console.log('Canvas 2D initialized');
+            return true;
+        } catch (error) {
+            console.warn('Canvas 2D initialization failed:', error);
+            return false;
+        }
+    }
+
+    tryInitSVG() {
+        try {
+            // SVG doesn't need initialization, just flag it
+            this.context = null;
+            this.renderMode = 'svg';
+            console.log('SVG initialized');
+            return true;
+        } catch (error) {
+            console.warn('SVG initialization failed:', error);
+            return false;
+        }
+    }
+
+    loadMapData(jsonData) {
+        try {
+            this.mapData = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
+            
+            // Reset draw scale parameters to original values
+            this.SLOPE_LINE_WIDTH = 1.0;
+            this.RIVER_LINE_WIDTH = 2.5;
+            this.CONTOUR_LINE_WIDTH = 1.5;
+            this.BORDER_LINE_WIDTH = 6.0;
+            this.BORDER_DASH_PATTERN = [3, 4];
+            this.CITY_MARKER_OUTER_RADIUS = 10;
+            this.CITY_MARKER_INNER_RADIUS = 5;
+            this.TOWN_MARKER_RADIUS = 5;
+            
+            console.log('Map data loaded:', Object.keys(this.mapData));
+            console.log('Image size:', this.mapData.image_width, 'x', this.mapData.image_height);
+            console.log('Draw scale:', this.mapData.draw_scale);
+            return true;
+        } catch (error) {
+            console.error('Failed to parse map data:', error);
+            return false;
+        }
+    }
+
+    updateDrawScale(scale) {
+        this.SLOPE_LINE_WIDTH *= scale;
+        this.RIVER_LINE_WIDTH *= scale;
+        this.CONTOUR_LINE_WIDTH *= scale;
+        this.BORDER_LINE_WIDTH *= scale;
+        this.BORDER_DASH_PATTERN = this.BORDER_DASH_PATTERN.map(v => v * scale);
+        
+        this.CITY_MARKER_OUTER_RADIUS *= scale;
+        this.CITY_MARKER_INNER_RADIUS *= scale;
+        this.TOWN_MARKER_RADIUS *= scale;
+    }
+
+    rgbaToStyle(rgba) {
+        const r = Math.round(rgba[0] * 255);
+        const g = Math.round(rgba[1] * 255);
+        const b = Math.round(rgba[2] * 255);
+        const a = rgba[3];
+        return `rgba(${r}, ${g}, ${b}, ${a})`;
+    }
+
+    async render() {
+        if (!this.mapData) {
+            console.warn('No map data to render');
+            return;
+        }
+
+        const imgwidth = this.mapData.image_width;
+        const imgheight = this.mapData.image_height;
+        
+        // Update draw scale
+        this.updateDrawScale(this.mapData.draw_scale);
+
+        if (this.renderMode === 'svg') {
+            // SVG rendering
+            this.renderToSVG(imgwidth, imgheight);
+        } else {
+            // Set canvas size
+            this.canvas.width = imgwidth;
+            this.canvas.height = imgheight;
+            
+            if (this.renderMode === 'canvas') {
+                // Direct Canvas 2D rendering
+                this.renderToCanvas2D(this.context, imgwidth, imgheight);
+            } else {
+                // Render to offscreen canvas first for WebGPU/WebGL
+                const offscreenCanvas = document.createElement('canvas');
+                offscreenCanvas.width = imgwidth;
+                offscreenCanvas.height = imgheight;
+                const ctx2d = offscreenCanvas.getContext('2d', { alpha: false });
+                
+                this.renderToCanvas2D(ctx2d, imgwidth, imgheight);
+                
+                if (this.renderMode === 'webgpu') {
+                    const imageData = ctx2d.getImageData(0, 0, imgwidth, imgheight);
+                    await this.copyToWebGPU(imageData);
+                } else if (this.renderMode === 'webgl') {
+                    const imageData = ctx2d.getImageData(0, 0, imgwidth, imgheight);
+                    this.copyToWebGL(imageData);
+                }
+            }
+        }
+        
+        console.log(`Render complete (${this.renderMode})`);
+    }
+
+    renderToCanvas2D(ctx, imgwidth, imgheight) {
+        // Background
+        ctx.fillStyle = this.rgbaToStyle(this.BACKGROUND_RGBA);
+        ctx.fillRect(0, 0, imgwidth, imgheight);
+        
+        // Draw slope lines
+        ctx.lineWidth = this.SLOPE_LINE_WIDTH;
+        ctx.strokeStyle = this.rgbaToStyle(this.SLOPE_RGBA);
+        this.drawSegments(this.mapData.slope, ctx, imgwidth, imgheight);
+        
+        // Draw territory borders (white background)
+        ctx.lineWidth = this.BORDER_LINE_WIDTH;
+        ctx.strokeStyle = this.rgbaToStyle(this.BACKGROUND_RGBA);
+        this.drawPaths(this.mapData.territory, ctx, imgwidth, imgheight);
+        
+        // Draw territory borders (dashed)
+        ctx.lineWidth = this.BORDER_LINE_WIDTH;
+        ctx.setLineDash(this.BORDER_DASH_PATTERN);
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'bevel';
+        ctx.strokeStyle = this.rgbaToStyle(this.BORDER_RGBA);
+        this.drawPaths(this.mapData.territory, ctx, imgwidth, imgheight);
+        ctx.setLineDash([]);
+        
+        // Draw rivers
+        ctx.lineWidth = this.RIVER_LINE_WIDTH;
+        ctx.strokeStyle = this.rgbaToStyle(this.RIVER_RGBA);
+        this.drawPaths(this.mapData.river, ctx, imgwidth, imgheight);
+        
+        // Draw contours
+        ctx.lineWidth = this.CONTOUR_LINE_WIDTH;
+        ctx.strokeStyle = this.rgbaToStyle(this.CONTOUR_RGBA);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this.drawPaths(this.mapData.contour, ctx, imgwidth, imgheight);
+        
+        // Draw cities and towns
+        this.drawCities(this.mapData.city, ctx, imgwidth, imgheight);
+        this.drawTowns(this.mapData.town, ctx, imgwidth, imgheight);
+        
+        // Draw labels
+        if (this.mapData.label && this.mapData.label.length > 0) {
+            this.drawLabels(this.mapData.label, ctx, imgwidth, imgheight);
+        }
+    }
+
+    drawPaths(data, ctx, imgwidth, imgheight) {
+        for (const path of data) {
+            ctx.beginPath();
+            for (let i = 0; i < path.length; i += 2) {
+                const px = path[i] * imgwidth;
+                const py = imgheight - path[i + 1] * imgheight;
+                
+                if (i === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
+            ctx.stroke();
+        }
+    }
+
+    drawSegments(data, ctx, imgwidth, imgheight) {
+        ctx.beginPath();
+        for (let i = 0; i < data.length; i += 4) {
+            const x1 = data[i] * imgwidth;
+            const y1 = imgheight - data[i + 1] * imgheight;
+            const x2 = data[i + 2] * imgwidth;
+            const y2 = imgheight - data[i + 3] * imgheight;
+            
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+        }
+        ctx.stroke();
+    }
+
+    drawCities(data, ctx, imgwidth, imgheight) {
+        for (let i = 0; i < data.length; i += 2) {
+            const px = data[i] * imgwidth;
+            const py = imgheight - data[i + 1] * imgheight;
+            
+            // Outer circle
+            ctx.fillStyle = this.rgbaToStyle(this.CITY_MARKER_RGBA);
+            ctx.beginPath();
+            ctx.arc(px, py, this.CITY_MARKER_OUTER_RADIUS, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Inner circle (white)
+            ctx.fillStyle = this.rgbaToStyle(this.BACKGROUND_RGBA);
+            ctx.beginPath();
+            ctx.arc(px, py, this.CITY_MARKER_INNER_RADIUS, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    }
+
+    drawTowns(data, ctx, imgwidth, imgheight) {
+        ctx.fillStyle = this.rgbaToStyle(this.TOWN_MARKER_RGBA);
+        for (let i = 0; i < data.length; i += 2) {
+            const px = data[i] * imgwidth;
+            const py = imgheight - data[i + 1] * imgheight;
+            
+            ctx.beginPath();
+            ctx.arc(px, py, this.TOWN_MARKER_RADIUS, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    }
+
+    drawLabels(data, ctx, imgwidth, imgheight) {
+        for (const label of data) {
+            ctx.font = `${label.fontsize}px ${label.fontface}`;
+            
+            const px = label.position[0] * imgwidth;
+            const py = (1.0 - label.position[1]) * imgheight;
+            
+            const minx = label.extents[0] * imgwidth;
+            const miny = (1.0 - label.extents[1]) * imgheight;
+            const maxx = label.extents[2] * imgwidth;
+            const maxy = (1.0 - label.extents[3]) * imgheight;
+            const width = Math.abs(maxx - minx);
+            const height = Math.abs(maxy - miny);
+            
+            // Background rectangle
+            ctx.fillStyle = this.rgbaToStyle(this.BACKGROUND_RGBA);
+            ctx.fillRect(minx, maxy, width, height);
+            
+            // Text
+            ctx.fillStyle = this.rgbaToStyle(this.TEXT_RGBA);
+            ctx.fillText(label.text, px, py);
+        }
+    }
+
+    async copyToWebGPU(imageData) {
+        // Reconfigure context with new size
+        const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+        this.context.configure({
+            device: this.device,
+            format: presentationFormat,
+            alphaMode: 'opaque',
+        });
+
+        // Create texture from image data
+        const texture = this.device.createTexture({
+            size: [imageData.width, imageData.height],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | 
+                   GPUTextureUsage.COPY_DST | 
+                   GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+
+        this.device.queue.writeTexture(
+            { texture },
+            imageData.data,
+            { bytesPerRow: imageData.width * 4 },
+            { width: imageData.width, height: imageData.height }
+        );
+
+        // Render texture to canvas
+        const commandEncoder = this.device.createCommandEncoder();
+        const textureView = this.context.getCurrentTexture().createView();
+        
+        const renderPassDescriptor = {
+            colorAttachments: [{
+                view: textureView,
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            }],
+        };
+
+        // Simple blit shader
+        const shaderModule = this.device.createShaderModule({
+            code: `
+                struct VertexOutput {
+                    @builtin(position) position: vec4f,
+                    @location(0) uv: vec2f,
+                }
+
+                @vertex
+                fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
+                    var pos = array<vec2f, 6>(
+                        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+                        vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0)
+                    );
+                    var uv = array<vec2f, 6>(
+                        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+                        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0)
+                    );
+                    var output: VertexOutput;
+                    output.position = vec4f(pos[idx], 0.0, 1.0);
+                    output.uv = uv[idx];
+                    return output;
+                }
+
+                @group(0) @binding(0) var tex: texture_2d<f32>;
+                @group(0) @binding(1) var samp: sampler;
+
+                @fragment
+                fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+                    return textureSample(tex, samp, input.uv);
+                }
+            `
+        });
+
+        const pipeline = this.device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { 
+                module: shaderModule, 
+                entryPoint: 'vs_main',
+            },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'fs_main',
+                targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
+            },
+            primitive: {
+                topology: 'triangle-list',
+            },
+        });
+
+        const sampler = this.device.createSampler({
+            magFilter: 'nearest',
+            minFilter: 'nearest',
+            addressModeU: 'clamp-to-edge',
+            addressModeV: 'clamp-to-edge',
+        });
+
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: texture.createView() },
+                { binding: 1, resource: sampler },
+            ],
+        });
+
+        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+        passEncoder.setPipeline(pipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.draw(6);
+        passEncoder.end();
+
+        this.device.queue.submit([commandEncoder.finish()]);
+    }
+
+    copyToWebGL(imageData) {
+        const gl = this.context;
+        
+        // Set viewport
+        gl.viewport(0, 0, imageData.width, imageData.height);
+        
+        // Clear any previous errors
+        while (gl.getError() !== gl.NO_ERROR) {}
+        
+        // Create and setup texture
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        
+        // Upload the image data
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            imageData.width,
+            imageData.height,
+            0,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            imageData.data
+        );
+        
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        
+        // Check for errors
+        const error = gl.getError();
+        if (error !== gl.NO_ERROR) {
+            console.error('WebGL texture creation error:', error);
+        }
+        
+        // Create shaders
+        const vertexShaderSource = `
+            attribute vec2 a_position;
+            attribute vec2 a_texCoord;
+            varying vec2 v_texCoord;
+            
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+                v_texCoord = a_texCoord;
+            }
+        `;
+        
+        const fragmentShaderSource = `
+            precision mediump float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            
+            void main() {
+                gl_FragColor = texture2D(u_texture, v_texCoord);
+            }
+        `;
+        
+        const vertexShader = this.createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = this.createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+        
+        if (!vertexShader || !fragmentShader) {
+            console.error('Failed to create shaders');
+            return;
+        }
+        
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(program));
+            return;
+        }
+        
+        gl.useProgram(program);
+        
+        // Create buffer with interleaved position and texcoord data
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+            // x, y, u, v
+            -1, -1,  0, 1,
+             1, -1,  1, 1,
+            -1,  1,  0, 0,
+            -1,  1,  0, 0,
+             1, -1,  1, 1,
+             1,  1,  1, 0,
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+        
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+        
+        const stride = 4 * 4; // 4 floats * 4 bytes
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, stride, 0);
+        
+        gl.enableVertexAttribArray(texCoordLocation);
+        gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, stride, 2 * 4);
+        
+        // Set texture uniform
+        const textureLocation = gl.getUniformLocation(program, 'u_texture');
+        gl.uniform1i(textureLocation, 0);
+        
+        // Draw
+        gl.clearColor(1, 1, 1, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        
+        // Check for rendering errors
+        const renderError = gl.getError();
+        if (renderError !== gl.NO_ERROR) {
+            console.error('WebGL rendering error:', renderError);
+        }
+    }
+
+    createShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        
+        return shader;
+    }
+
+    renderToSVG(imgwidth, imgheight) {
+        // Create SVG element with explicit dimensions matching canvas
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        
+        // Set both attributes and inline styles to match canvas behavior
+        svg.setAttribute('width', imgwidth);
+        svg.setAttribute('height', imgheight);
+        svg.setAttribute('viewBox', `0 0 ${imgwidth} ${imgheight}`);
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        
+        // Critical: Set display to block to avoid inline spacing issues
+        svg.style.display = 'block';
+        
+        // Background rect
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        bg.setAttribute('width', imgwidth);
+        bg.setAttribute('height', imgheight);
+        bg.setAttribute('fill', this.rgbaToStyle(this.BACKGROUND_RGBA));
+        svg.appendChild(bg);
+        
+        // Draw slope lines
+        const slopeGroup = this.createSVGSegments(this.mapData.slope, imgwidth, imgheight, 
+            this.rgbaToStyle(this.SLOPE_RGBA), this.SLOPE_LINE_WIDTH);
+        svg.appendChild(slopeGroup);
+        
+        // Draw territory borders (white background)
+        const territoryBgGroup = this.createSVGPaths(this.mapData.territory, imgwidth, imgheight,
+            'none', this.rgbaToStyle(this.BACKGROUND_RGBA), this.BORDER_LINE_WIDTH);
+        svg.appendChild(territoryBgGroup);
+        
+        // Draw territory borders (dashed)
+        const territoryGroup = this.createSVGPaths(this.mapData.territory, imgwidth, imgheight,
+            'none', this.rgbaToStyle(this.BORDER_RGBA), this.BORDER_LINE_WIDTH, 
+            this.BORDER_DASH_PATTERN.join(','), 'butt', 'bevel');
+        svg.appendChild(territoryGroup);
+        
+        // Draw rivers
+        const riverGroup = this.createSVGPaths(this.mapData.river, imgwidth, imgheight,
+            'none', this.rgbaToStyle(this.RIVER_RGBA), this.RIVER_LINE_WIDTH);
+        svg.appendChild(riverGroup);
+        
+        // Draw contours
+        const contourGroup = this.createSVGPaths(this.mapData.contour, imgwidth, imgheight,
+            'none', this.rgbaToStyle(this.CONTOUR_RGBA), this.CONTOUR_LINE_WIDTH, 
+            null, 'round', 'round');
+        svg.appendChild(contourGroup);
+        
+        // Draw cities
+        const cityGroup = this.createSVGCities(this.mapData.city, imgwidth, imgheight);
+        svg.appendChild(cityGroup);
+        
+        // Draw towns
+        const townGroup = this.createSVGTowns(this.mapData.town, imgwidth, imgheight);
+        svg.appendChild(townGroup);
+        
+        // Draw labels
+        if (this.mapData.label && this.mapData.label.length > 0) {
+            const labelGroup = this.createSVGLabels(this.mapData.label, imgwidth, imgheight);
+            svg.appendChild(labelGroup);
+        }
+        
+        // Replace canvas with SVG
+        const container = this.canvas.parentElement;
+        this.canvas.style.display = 'none';
+        
+        // Remove old SVG if exists
+        const oldSvg = container.querySelector('svg');
+        if (oldSvg) {
+            container.removeChild(oldSvg);
+        }
+        
+        container.appendChild(svg);
+        this.svgElement = svg;
+    }
+
+    createSVGSegments(data, imgwidth, imgheight, stroke, strokeWidth) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const x1 = data[i] * imgwidth;
+            const y1 = imgheight - data[i + 1] * imgheight;
+            const x2 = data[i + 2] * imgwidth;
+            const y2 = imgheight - data[i + 3] * imgheight;
+            
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', x1);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2);
+            line.setAttribute('y2', y2);
+            line.setAttribute('stroke', stroke);
+            line.setAttribute('stroke-width', strokeWidth);
+            g.appendChild(line);
+        }
+        
+        return g;
+    }
+
+    createSVGPaths(data, imgwidth, imgheight, fill, stroke, strokeWidth, dashArray = null, lineCap = 'butt', lineJoin = 'miter') {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        for (const path of data) {
+            let d = '';
+            for (let i = 0; i < path.length; i += 2) {
+                const px = path[i] * imgwidth;
+                const py = imgheight - path[i + 1] * imgheight;
+                
+                if (i === 0) {
+                    d += `M ${px} ${py} `;
+                } else {
+                    d += `L ${px} ${py} `;
+                }
+            }
+            
+            const pathElem = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            pathElem.setAttribute('d', d);
+            pathElem.setAttribute('fill', fill);
+            pathElem.setAttribute('stroke', stroke);
+            pathElem.setAttribute('stroke-width', strokeWidth);
+            pathElem.setAttribute('stroke-linecap', lineCap);
+            pathElem.setAttribute('stroke-linejoin', lineJoin);
+            if (dashArray) {
+                pathElem.setAttribute('stroke-dasharray', dashArray);
+            }
+            g.appendChild(pathElem);
+        }
+        
+        return g;
+    }
+
+    createSVGCities(data, imgwidth, imgheight) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        for (let i = 0; i < data.length; i += 2) {
+            const px = data[i] * imgwidth;
+            const py = imgheight - data[i + 1] * imgheight;
+            
+            // Outer circle
+            const outer = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            outer.setAttribute('cx', px);
+            outer.setAttribute('cy', py);
+            outer.setAttribute('r', this.CITY_MARKER_OUTER_RADIUS);
+            outer.setAttribute('fill', this.rgbaToStyle(this.CITY_MARKER_RGBA));
+            g.appendChild(outer);
+            
+            // Inner circle
+            const inner = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            inner.setAttribute('cx', px);
+            inner.setAttribute('cy', py);
+            inner.setAttribute('r', this.CITY_MARKER_INNER_RADIUS);
+            inner.setAttribute('fill', this.rgbaToStyle(this.BACKGROUND_RGBA));
+            g.appendChild(inner);
+        }
+        
+        return g;
+    }
+
+    createSVGTowns(data, imgwidth, imgheight) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        for (let i = 0; i < data.length; i += 2) {
+            const px = data[i] * imgwidth;
+            const py = imgheight - data[i + 1] * imgheight;
+            
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', px);
+            circle.setAttribute('cy', py);
+            circle.setAttribute('r', this.TOWN_MARKER_RADIUS);
+            circle.setAttribute('fill', this.rgbaToStyle(this.TOWN_MARKER_RGBA));
+            g.appendChild(circle);
+        }
+        
+        return g;
+    }
+
+    createSVGLabels(data, imgwidth, imgheight) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        for (const label of data) {
+            const px = label.position[0] * imgwidth;
+            const py = (1.0 - label.position[1]) * imgheight;
+            
+            const minx = label.extents[0] * imgwidth;
+            const miny = (1.0 - label.extents[1]) * imgheight;
+            const maxx = label.extents[2] * imgwidth;
+            const maxy = (1.0 - label.extents[3]) * imgheight;
+            const width = Math.abs(maxx - minx);
+            const height = Math.abs(maxy - miny);
+            
+            // Background rectangle
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', minx);
+            rect.setAttribute('y', maxy);
+            rect.setAttribute('width', width);
+            rect.setAttribute('height', height);
+            rect.setAttribute('fill', this.rgbaToStyle(this.BACKGROUND_RGBA));
+            g.appendChild(rect);
+            
+            // Text
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', px);
+            text.setAttribute('y', py);
+            text.setAttribute('font-family', label.fontface);
+            text.setAttribute('font-size', label.fontsize);
+            text.setAttribute('fill', this.rgbaToStyle(this.TEXT_RGBA));
+            text.textContent = label.text;
+            g.appendChild(text);
+        }
+        
+        return g;
+    }
+
+    exportToPNG() {
+        if (this.renderMode === 'svg') {
+            // Convert SVG to PNG
+            return this.svgToPNG();
+        }
+        return this.canvas.toDataURL('image/png');
+    }
+
+    svgToPNG() {
+        const svgData = new XMLSerializer().serializeToString(this.svgElement);
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        
+        const img = new Image();
+        const canvas = document.createElement('canvas');
+        canvas.width = this.mapData.image_width;
+        canvas.height = this.mapData.image_height;
+        const ctx = canvas.getContext('2d');
+        
+        return new Promise((resolve) => {
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+                resolve(canvas.toDataURL('image/png'));
+            };
+            img.src = url;
+        });
+    }
+}
+
+// UI Controller
+class UIController {
+    constructor() {
+        this.renderer = null;
+        this.fileInput = document.getElementById('fileInput');
+        this.rendererSelect = document.getElementById('rendererSelect');
+        this.exportBtn = document.getElementById('exportBtn');
+        this.exportSvgBtn = document.getElementById('exportSvgBtn');
+        this.status = document.getElementById('status');
+        this.errorDiv = document.getElementById('error');
+        this.canvas = document.getElementById('mapCanvas');
+        this.currentMapData = null;
+
+        this.setupEventListeners();
+        this.initializeRenderer();
+    }
+
+    async initializeRenderer(preferredMode = 'auto') {
+        this.renderer = new MapRenderer(this.canvas);
+        
+        try {
+            // First detect available modes
+            await this.renderer.detectAvailableModes();
+            this.updateRendererOptions();
+            
+            // Then initialize with preferred mode
+            const mode = await this.renderer.initialize(preferredMode);
+            this.updateStatusWithMode(mode, 'ready');
+        } catch (error) {
+            this.showError(`Failed to initialize renderer: ${error.message}`);
+            this.updateStatus('No rendering backend available');
+        }
+    }
+
+    updateRendererOptions() {
+        const select = this.rendererSelect;
+        const currentValue = select.value;
+        
+        // Disable options that are not available
+        for (let i = 0; i < select.options.length; i++) {
+            const option = select.options[i];
+            const value = option.value;
+            
+            if (value === 'auto') {
+                option.disabled = false;
+            } else {
+                option.disabled = !this.renderer.availableModes.includes(value);
+                if (option.disabled) {
+                    option.text = option.text.split(' (')[0] + ' (Not Available)';
+                }
+            }
+        }
+        
+        // Reset to auto if current selection is not available
+        if (currentValue !== 'auto' && !this.renderer.availableModes.includes(currentValue)) {
+            select.value = 'auto';
+        }
+    }
+
+    updateStatusWithMode(mode, state = 'ready') {
+        const modeNames = {
+            'webgpu': 'WebGPU',
+            'webgl': 'WebGL',
+            'canvas': 'Canvas 2D',
+            'svg': 'SVG'
+        };
+        
+        const badge = `<span class="renderer-badge ${mode}">${modeNames[mode]}</span>`;
+        
+        if (state === 'ready') {
+            this.status.innerHTML = `Renderer ready ${badge} - Load test-map.json`;
+        } else if (state === 'rendered') {
+            this.status.innerHTML = `Map rendered successfully ${badge}`;
+        }
+    }
+
+    setupEventListeners() {
+        this.fileInput.addEventListener('change', (e) => this.handleFileLoad(e));
+        this.rendererSelect.addEventListener('change', (e) => this.handleRendererChange(e));
+        this.exportBtn.addEventListener('click', () => this.handleExport());
+        this.exportSvgBtn.addEventListener('click', () => this.handleExportSVG());
+    }
+
+    async handleRendererChange(event) {
+        const selectedMode = event.target.value;
+        this.updateStatus('Switching renderer...');
+        this.hideError();
+        
+        try {
+            // Clear canvas and SVG
+            const container = this.canvas.parentElement;
+            const oldSvg = container.querySelector('svg');
+            if (oldSvg) {
+                container.removeChild(oldSvg);
+            }
+            
+            // Show canvas and clear it
+            this.canvas.style.display = 'block';
+            const ctx = this.canvas.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+            
+            // Create a new canvas element to avoid context conflicts
+            const newCanvas = document.createElement('canvas');
+            newCanvas.id = 'mapCanvas';
+            newCanvas.style.cssText = this.canvas.style.cssText;
+            this.canvas.parentElement.replaceChild(newCanvas, this.canvas);
+            this.canvas = newCanvas;
+            
+            // Reinitialize renderer with new canvas
+            this.renderer = new MapRenderer(this.canvas);
+            await this.renderer.detectAvailableModes();
+            this.updateRendererOptions();
+            
+            const mode = await this.renderer.initialize(selectedMode);
+            this.updateStatusWithMode(mode, 'ready');
+            
+            // Re-render if we have map data
+            if (this.currentMapData) {
+                this.updateStatus('Re-rendering map...');
+                this.renderer.loadMapData(this.currentMapData);
+                await this.renderer.render();
+                this.updateStatusWithMode(this.renderer.renderMode, 'rendered');
+                this.exportBtn.disabled = false;
+                this.exportSvgBtn.disabled = this.renderer.renderMode !== 'svg';
+            }
+        } catch (error) {
+            this.showError(`Failed to switch renderer: ${error.message}`);
+            this.updateStatus('Error switching renderer');
+            console.error(error);
+        }
+    }
+
+    async handleFileLoad(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        this.updateStatus('Loading map data...');
+        this.hideError();
+
+        try {
+            const text = await file.text();
+            this.currentMapData = text;
+            
+            if (this.renderer.loadMapData(text)) {
+                this.updateStatus('Rendering map...');
+                await this.renderer.render();
+                this.updateStatusWithMode(this.renderer.renderMode, 'rendered');
+                this.exportBtn.disabled = false;
+                this.exportSvgBtn.disabled = this.renderer.renderMode !== 'svg';
+            } else {
+                throw new Error('Failed to parse map data');
+            }
+        } catch (error) {
+            this.showError(`Error loading map: ${error.message}`);
+            this.updateStatus('Error loading map');
+            console.error(error);
+        }
+    }
+
+    async handleExport() {
+        try {
+            const dataUrl = await this.renderer.exportToPNG();
+            const link = document.createElement('a');
+            link.download = 'fantasy_map.png';
+            link.href = dataUrl;
+            link.click();
+            this.updateStatus('Map exported successfully');
+        } catch (error) {
+            this.showError(`Error exporting map: ${error.message}`);
+        }
+    }
+
+    handleExportSVG() {
+        try {
+            if (this.renderer.renderMode === 'svg' && this.renderer.svgElement) {
+                const svgData = new XMLSerializer().serializeToString(this.renderer.svgElement);
+                const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = 'fantasy_map.svg';
+                link.href = url;
+                link.click();
+                URL.revokeObjectURL(url);
+                this.updateStatus('SVG exported successfully');
+            } else {
+                this.showError('SVG export only available when using SVG renderer');
+            }
+        } catch (error) {
+            this.showError(`Error exporting SVG: ${error.message}`);
+        }
+    }
+
+    updateStatus(message) {
+        this.status.textContent = message;
+    }
+
+    showError(message) {
+        this.errorDiv.textContent = message;
+        this.errorDiv.style.display = 'block';
+    }
+
+    hideError() {
+        this.errorDiv.style.display = 'none';
+    }
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => new UIController());
+} else {
+    new UIController();
+}
+    </script>
+</body>
+</html>

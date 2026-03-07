@@ -1,3 +1,57 @@
+//! 地图生成器核心模块
+//!
+//! 这是整个项目的核心模块，实现了完整的幻想地图生成流程。
+//!
+//! # 地图生成流程
+//!
+//! ## 1. 生成不规则网格
+//! - 使用 Poisson 圆盘采样生成均匀分布的点
+//! - 对点集进行 Delaunay 三角剖分
+//! - 计算 Delaunay 三角剖分的对偶图（Voronoi 图）
+//! - Voronoi 图的顶点作为地图的不规则网格节点
+//!
+//! ## 2. 生成地形
+//! - 使用地形原语（山丘、圆锥、斜坡）生成初始高度图
+//! - 应用归一化、圆滑、松弛等操作
+//! - 使用 Planchon-Darboux 算法填充洼地
+//! - 计算流向图和流量图
+//! - 应用侵蚀算法模拟水流侵蚀
+//! - 生成河流路径
+//! - 生成等高线
+//! - 生成坡度阴影
+//!
+//! ## 3. 生成城市和边界
+//! - 计算城市得分（基于流量、距离等因素）
+//! - 在得分最高的位置放置城市
+//! - 计算每个城市的移动成本图
+//! - 根据移动成本划分领土
+//! - 清理和平滑领土边界
+//! - 生成领土边界线
+//! - 放置城镇
+//!
+//! ## 4. 生成标签位置
+//! - 为城市和城镇生成标记标签候选位置
+//! - 为领土生成区域标签候选位置
+//! - 计算每个候选位置的得分
+//! - 使用模拟退火算法优化标签布局
+//!
+//! # 主要算法
+//!
+//! - **Poisson 圆盘采样**: 生成均匀分布的点
+//! - **Delaunay 三角剖分**: 将点连接成三角形网格
+//! - **Voronoi 图**: Delaunay 的对偶图，用作地图网格
+//! - **Planchon-Darboux 算法**: 填充地形洼地，确保水流路径存在
+//! - **流向计算**: 计算每个点的水流方向
+//! - **侵蚀模拟**: 模拟水流对地形的侵蚀作用
+//! - **Dijkstra 算法**: 计算城市的移动成本
+//! - **模拟退火**: 优化标签布局
+//!
+//! # 参考来源
+//! - M. O'Leary, "Generating fantasy maps", https://mewo2.com/notes/terrain/
+//! - O. Planchon and F. Darboux, "Depression filling algorithm", CATENA, 2002
+//! - S. Edmondson et al., "A General Cartographic Labeling Algorithm", MERL, 1996
+//! - 原始 C++ 实现: src/mapgenerator.h, src/mapgenerator.cpp
+
 #![allow(
     clippy::too_many_arguments,
     // Large map generator - not all helper methods are used from main, but
@@ -9,67 +63,167 @@
 use std::collections::VecDeque;
 use serde_json::{json, Value};
 
-use crate::dcel::{Dcel, Face, HalfEdge, Point, Ref, Vertex};
-use crate::extents2d::Extents2d;
-use crate::rand::GlibcRand;
-use crate::vertex_map::VertexMap;
-use crate::node_map::NodeMap;
-use crate::font_face::{FontFace, TextExtents};
-use crate::spatial_point_grid::SpatialPointGrid;
-use crate::poisson_disc;
-use crate::delaunay;
-use crate::voronoi;
+use crate::data_structures::dcel::{Dcel, Face, HalfEdge, Point, Ref, Vertex};
+use crate::data_structures::extents2d::Extents2d;
+use crate::utils::rand::GlibcRand;
+use crate::data_structures::vertex_map::VertexMap;
+use crate::data_structures::node_map::NodeMap;
+use crate::utils::font_face::{FontFace, TextExtents};
+use crate::data_structures::spatial_point_grid::SpatialPointGrid;
+use crate::algorithms::poisson_disc;
+use crate::algorithms::delaunay;
+use crate::algorithms::voronoi;
 
+/// 城市数据
+///
+/// 存储城市的名称、位置、领土信息和移动成本图。
 #[derive(Clone, Debug)]
 struct City {
+    /// 城市名称
     city_name: String,
+    /// 领土名称
     territory_name: String,
+    /// 城市位置
     position: Point,
+    /// 城市所在的 Voronoi 面 ID
     face_id: usize,
+    /// 从该城市到每个网格节点的移动成本
     movement_costs: Vec<f64>,
 }
 
+/// 城镇数据
+///
+/// 存储城镇的名称和位置。
+/// 城镇不参与领土划分，只作为地图上的标记点。
 #[derive(Clone, Debug)]
 struct Town {
+    /// 城镇名称
     town_name: String,
+    /// 城镇位置
     position: Point,
+    /// 城镇所在的 Voronoi 面 ID
     face_id: usize,
 }
 
+/// 标签候选位置
+///
+/// 表示一个可能的标签放置位置及其评分。
+/// 标签放置算法会为每个标签生成多个候选位置，
+/// 然后使用模拟退火算法选择最优的组合。
 #[derive(Clone, Debug, Default)]
 struct LabelCandidate {
+    /// 标签文本
     text: String,
+    /// 字体名称
     fontface: String,
+    /// 字体大小
     fontsize: i32,
+    /// 标签位置（左下角）
     position: Point,
+    /// 标签边界框
     extents: Extents2d,
+    /// 每个字符的边界框
     char_extents: Vec<Extents2d>,
+    /// 所属城市 ID（-1 表示不属于任何城市）
     city_id: i32,
 
+    // 评分组件
+    /// 方向得分（标签相对于标记点的方向）
     orientation_score: f64,
+    /// 边缘得分（标签是否超出地图边界）
     edge_score: f64,
+    /// 标记得分（标签是否与其他标记重叠）
     marker_score: f64,
+    /// 等高线得分（标签与等高线的重叠程度）
     contour_score: f64,
+    /// 河流得分（标签与河流的重叠程度）
     river_score: f64,
+    /// 边界得分（标签与领土边界的重叠程度）
     border_score: f64,
+    /// 基础得分（所有评分组件的加权和）
     base_score: f64,
 
+    /// 父标签索引
     parent_idx: usize,
+    /// 碰撞索引（用于快速查找重叠的候选位置）
     collision_idx: usize,
-    collision_data: Vec<usize>, // collision_idx of overlapping candidates
+    /// 与该候选位置重叠的其他候选位置的碰撞索引列表
+    collision_data: Vec<usize>,
 }
 
+/// 标签
+///
+/// 表示一个需要放置的标签及其所有候选位置。
 #[derive(Clone, Debug, Default)]
 struct Label {
+    /// 标签文本
     text: String,
+    /// 字体名称
     fontface: String,
+    /// 字体大小
     fontsize: i32,
+    /// 标签位置（当前选中的候选位置）
     position: Point,
+    /// 所有候选位置
     candidates: Vec<LabelCandidate>,
+    /// 当前选中的候选位置索引
     candidate_idx: usize,
+    /// 当前得分
     score: f64,
 }
 
+/// 地图生成器
+///
+/// 这是整个地图生成系统的核心结构，包含了所有地图数据和生成算法。
+///
+/// # 主要组件
+///
+/// ## 网格数据
+/// - `voronoi`: Voronoi 图（DCEL 格式）
+/// - `vertex_map`: 顶点映射（分类和索引）
+/// - `neighbour_map`: 邻居关系
+/// - `face_neighbours`: 面的邻居关系
+///
+/// ## 地形数据
+/// - `height_map`: 高度图
+/// - `flux_map`: 流量图（河流流量）
+/// - `flow_map`: 流向图（水流方向）
+///
+/// ## 城市数据
+/// - `cities`: 城市列表
+/// - `towns`: 城镇列表
+///
+/// ## 渲染数据
+/// - `contour_data`: 等高线数据
+/// - `river_data`: 河流数据
+/// - `border_data`: 边界数据
+///
+/// # 使用流程
+///
+/// ```rust,no_run
+/// use fantasy_map_generator::*;
+///
+/// // 1. 创建地图生成器
+/// let extents = Extents2d::new(0.0, 0.0, 20.0, 20.0);
+/// let rng = GlibcRand::new(12345);
+/// let mut map = MapGenerator::new(extents, 0.08, 1920, 1080, rng);
+///
+/// // 2. 初始化网格
+/// map.initialize();
+///
+/// // 3. 生成地形
+/// map.add_hill(10.0, 10.0, 5.0, 1.0);
+/// map.normalize();
+///
+/// // 4. 侵蚀地形
+/// map.erode(0.3);
+///
+/// // 5. 添加城市
+/// map.add_city("Capital".to_string(), "KINGDOM".to_string());
+///
+/// // 6. 获取绘图数据
+/// let json_data = map.get_draw_data();
+/// ```
 pub struct MapGenerator {
     extents: Extents2d,
     resolution: f64,
@@ -188,6 +342,20 @@ pub struct MapGenerator {
 }
 
 impl MapGenerator {
+    /// 创建新的地图生成器
+    ///
+    /// # 参数
+    /// * `extents` - 地图的逻辑边界（通常高度为 20.0，宽度根据纵横比计算）
+    /// * `resolution` - Poisson 圆盘采样的最小距离（越小越详细，推荐 0.05-0.15）
+    /// * `img_width` - 输出图像宽度（像素）
+    /// * `img_height` - 输出图像高度（像素）
+    /// * `rng` - 随机数生成器
+    ///
+    /// # 返回
+    /// 新的地图生成器实例，包含所有默认参数
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, MapGenerator 构造函数
     pub fn new(extents: Extents2d, resolution: f64, img_width: u32, img_height: u32, rng: GlibcRand) -> Self {
         let font_data_str = include_str!("fontdata/fontdata.json");
         let font_data = FontFace::new(font_data_str);
@@ -291,10 +459,17 @@ impl MapGenerator {
         }
     }
 
+    /// 获取地图边界
     pub fn get_extents(&self) -> Extents2d {
         self.extents
     }
 
+    /// 设置绘图缩放比例
+    ///
+    /// 控制地图元素（如河流、边界）的线条粗细。
+    ///
+    /// # 参数
+    /// * `scale` - 缩放比例（1.0 为默认值）
     pub fn set_draw_scale(&mut self, scale: f64) {
         if scale > 0.0 {
             let orig = self.draw_scale;
@@ -304,19 +479,41 @@ impl MapGenerator {
         }
     }
 
+    /// 获取随机数生成器的可变引用
     pub fn rng_mut(&mut self) -> &mut GlibcRand {
         &mut self.rng
     }
 
+    // 特性开关方法
+    /// 禁用坡度阴影
     pub fn disable_slopes(&mut self) { self.slopes_enabled = false; }
+    /// 禁用河流
     pub fn disable_rivers(&mut self) { self.rivers_enabled = false; }
+    /// 禁用等高线
     pub fn disable_contour(&mut self) { self.contour_enabled = false; }
+    /// 禁用领土边界
     pub fn disable_borders(&mut self) { self.borders_enabled = false; }
+    /// 禁用城市标记
     pub fn disable_cities(&mut self) { self.cities_enabled = false; }
+    /// 禁用城镇标记
     pub fn disable_towns(&mut self) { self.towns_enabled = false; }
+    /// 禁用所有标签
     pub fn disable_labels(&mut self) { self.labels_enabled = false; }
+    /// 禁用区域标签
     pub fn disable_area_labels(&mut self) { self.area_labels_enabled = false; }
 
+    /// 初始化地图生成器
+    ///
+    /// 生成不规则网格（Voronoi 图）并初始化所有数据结构。
+    ///
+    /// # 算法流程
+    /// 1. 使用 Poisson 圆盘采样生成均匀分布的点
+    /// 2. 对点集进行 Delaunay 三角剖分
+    /// 3. 计算 Delaunay 的对偶图（Voronoi 图）
+    /// 4. 初始化顶点映射、邻居关系等数据结构
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, initialize()
     pub fn initialize(&mut self) {
         self.init_voronoi_data();
         self.init_map_data();
@@ -388,6 +585,23 @@ impl MapGenerator {
         }
     }
 
+    /// 添加圆形山丘
+    ///
+    /// 创建一个高度平滑衰减的圆形山丘。
+    /// 高度从中心向外平滑下降，使用平方根函数实现。
+    ///
+    /// # 算法
+    /// 对于距离中心 d 的点：
+    /// - 如果 d < r: height_增量 = height * sqrt(1 - (d/r)²)
+    /// - 如果 d >= r: 不影响
+    ///
+    /// # 参数
+    /// * `px`, `py` - 山丘中心位置
+    /// * `r` - 山丘半径
+    /// * `height` - 山丘高度
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, addHill()
     pub fn add_hill(&mut self, px: f64, py: f64, r: f64, height: f64) {
         let coef1 = (4.0 / 9.0) / (r * r * r * r * r * r);
         let coef2 = (17.0 / 9.0) / (r * r * r * r);
@@ -406,6 +620,23 @@ impl MapGenerator {
         }
     }
 
+    /// 添加圆锥形山峰
+    ///
+    /// 创建一个高度线性衰减的圆锥形山峰。
+    /// 高度从中心向外线性下降。
+    ///
+    /// # 算法
+    /// 对于距离中心 d 的点：
+    /// - 如果 d < radius: height_增量 = height * (1 - d/radius)
+    /// - 如果 d >= radius: 不影响
+    ///
+    /// # 参数
+    /// * `px`, `py` - 圆锥中心位置
+    /// * `radius` - 圆锥半径
+    /// * `height` - 圆锥高度
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, addCone()
     pub fn add_cone(&mut self, px: f64, py: f64, radius: f64, height: f64) {
         let inv_r = 1.0 / radius;
         let rsq = radius * radius;
@@ -423,6 +654,24 @@ impl MapGenerator {
         }
     }
 
+    /// 添加斜坡（山脉）
+    ///
+    /// 创建一个沿指定方向的斜坡梯度。
+    /// 用于生成山脉等线性地形特征。
+    ///
+    /// # 算法
+    /// 对于每个点：
+    /// 1. 计算点到斜坡中心线的垂直距离 d
+    /// 2. 如果 d < radius: height_增量 = height * (1 - d/radius)
+    ///
+    /// # 参数
+    /// * `px`, `py` - 斜坡中心线上的一点
+    /// * `dirx`, `diry` - 斜坡方向向量（应该是单位向量）
+    /// * `radius` - 斜坡宽度的一半
+    /// * `height` - 斜坡高度
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, addSlope()
     pub fn add_slope(&mut self, px: f64, py: f64, dirx: f64, diry: f64, radius: f64, height: f64) {
         for i in 0..self.vertex_map.size() {
             let v = self.vertex_map.vertices[i].position;
@@ -444,22 +693,69 @@ impl MapGenerator {
         }
     }
 
+    /// 归一化高度图
+    ///
+    /// 将所有高度值线性缩放到 [0, 1] 范围。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, normalize()
     pub fn normalize(&mut self) {
         self.height_map.normalize();
     }
 
+    /// 圆滑高度图
+    ///
+    /// 先归一化，然后对每个值取平方根。
+    /// 这会使较小的值增大，较大的值减小，产生更平滑的地形。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, round()
     pub fn round(&mut self) {
         self.height_map.round();
     }
 
+    /// 松弛高度图
+    ///
+    /// 将每个节点的高度替换为其邻居的平均值。
+    /// 这是一种简单的平滑滤波器。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, relax()
     pub fn relax(&mut self) {
         self.height_map.relax(&self.vertex_map, &self.voronoi);
     }
 
+    /// 将海平面调整到中位数
+    ///
+    /// 计算所有高度值的中位数，然后从所有值中减去该中位数。
+    /// 这样可以使海平面（0 值）位于合适的位置，控制陆地和海洋的比例。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, setSeaLevelToMedian()
     pub fn set_sea_level_to_median(&mut self) {
         self.height_map.set_level_to_median();
     }
 
+    /// 侵蚀地形
+    ///
+    /// 模拟水流对地形的侵蚀作用。
+    /// 侵蚀会产生河谷、平滑山脉，使地形看起来更自然。
+    ///
+    /// # 算法流程
+    /// 1. 填充洼地（Planchon-Darboux 算法）
+    /// 2. 计算流向图
+    /// 3. 计算流量图
+    /// 4. 计算坡度图
+    /// 5. 应用侵蚀公式更新高度图
+    ///
+    /// # 侵蚀公式
+    /// erosion = min(slope * flux * river_factor + creep_factor, max_rate) * amount
+    ///
+    /// # 参数
+    /// * `amount` - 侵蚀量（推荐 0.2-0.35）
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, erode()
     pub fn erode(&mut self, amount: f64) {
         let mut erosion_map = NodeMap::new_filled(self.vertex_map.size(), 0.0);
         self.calculate_erosion_map(&mut erosion_map);
@@ -488,6 +784,35 @@ impl MapGenerator {
         erosion_map.normalize();
     }
 
+    /// 填充地形洼地（Planchon-Darboux 算法）
+    ///
+    /// 确保地形中没有洼地（局部最低点），使得每个点都有一条向下的路径到达地图边缘。
+    /// 这对于计算流向图和河流生成至关重要。
+    ///
+    /// # 算法原理（Planchon-Darboux）
+    ///
+    /// 1. 初始化：
+    ///    - 边界顶点：保持原始高度
+    ///    - 内部顶点：设置为无穷大
+    ///
+    /// 2. 迭代直到收敛：
+    ///    - 对每个内部顶点：
+    ///      - 计算 min_neighbour_height + epsilon
+    ///      - 如果当前高度 > 原始高度 且 > min_neighbour_height + epsilon：
+    ///        - 更新为 max(原始高度, min_neighbour_height + epsilon)
+    ///
+    /// 3. 结果：
+    ///    - 所有洼地被填充到刚好能让水流出的高度
+    ///    - 保持原始地形的大部分特征
+    ///
+    /// # 为什么需要 epsilon
+    /// epsilon 确保相邻点之间有微小的高度差，
+    /// 这样水流方向是明确的，不会出现平坦区域。
+    ///
+    /// # 参考来源
+    /// - O. Planchon and F. Darboux, "A fast, simple and versatile algorithm
+    ///   to fill the depressions of digital elevation models", CATENA, 2002
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, fillDepressions()
     fn fill_depressions(&mut self) {
         let max_h = self.height_map.max_val();
         let n = self.vertex_map.size();
@@ -526,6 +851,24 @@ impl MapGenerator {
         self.height_map = final_hm;
     }
 
+    /// 计算流向图
+    ///
+    /// 为每个网格节点计算水流方向（指向哪个邻居）。
+    /// 水总是流向高度最低的邻居。
+    ///
+    /// # 算法
+    /// 对于每个节点：
+    /// 1. 遍历所有邻居
+    /// 2. 找到高度最低的邻居
+    /// 3. 如果该邻居比当前节点低，记录流向该邻居
+    /// 4. 否则，流向地图边缘（flow_map = -1）
+    ///
+    /// # flow_map 的值
+    /// - -1: 流向地图边缘（边界节点或局部最高点）
+    /// - >= 0: 流向的邻居节点索引
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, calculateFlowMap()
     fn calculate_flow_map(&mut self) {
         let n = self.vertex_map.size();
         let mut flow_map = NodeMap::new_filled(n, -1i32);
@@ -547,6 +890,23 @@ impl MapGenerator {
         self.flow_map = flow_map;
     }
 
+    /// 计算流量图
+    ///
+    /// 计算流经每个节点的水流量（累积流量）。
+    /// 流量大的地方会形成河流。
+    ///
+    /// # 算法
+    /// 1. 初始化所有节点的流量为 1.0（降雨量）
+    /// 2. 按高度从高到低处理节点（使用优先队列）
+    /// 3. 对于每个节点：
+    ///    - 如果有下游节点，将当前流量累加到下游节点
+    ///
+    /// # 流量的含义
+    /// 流量表示有多少个上游节点的水流经该节点。
+    /// 流量越大，说明该节点汇集的水越多，越可能形成河流。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, calculateFluxMap()
     fn calculate_flux_map(&mut self) {
         self.calculate_flow_map();
         let n = self.vertex_map.size();
@@ -1043,6 +1403,23 @@ impl MapGenerator {
         }
     }
 
+    /// 添加城市
+    ///
+    /// 在地图上放置一个新城市。
+    /// 城市位置基于城市得分（流量、距离等因素）自动选择。
+    ///
+    /// # 算法流程
+    /// 1. 计算城市得分图
+    /// 2. 选择得分最高的位置
+    /// 3. 计算该城市的移动成本图
+    /// 4. 创建城市对象
+    ///
+    /// # 参数
+    /// * `city_name` - 城市名称
+    /// * `territory_name` - 领土名称（通常是大写的）
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, addCity()
     pub fn add_city(&mut self, city_name: String, territory_name: String) {
         self.ensure_eroded();
         let loc = self.get_city_location();
@@ -1057,6 +1434,16 @@ impl MapGenerator {
         self.cities.push(city);
     }
 
+    /// 添加城镇
+    ///
+    /// 在地图上放置一个新城镇。
+    /// 城镇位置基于城市得分自动选择，但城镇不参与领土划分。
+    ///
+    /// # 参数
+    /// * `town_name` - 城镇名称
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, addTown()
     pub fn add_town(&mut self, town_name: String) {
         self.ensure_eroded();
         let loc = self.get_city_location();
@@ -1083,6 +1470,32 @@ impl MapGenerator {
         (self.compute_face_position(best_fidx), best_fidx)
     }
 
+    /// 计算城市得分图
+    ///
+    /// 为每个节点计算适合放置城市的得分。
+    /// 得分高的位置更适合建立城市。
+    ///
+    /// # 得分因素
+    ///
+    /// ## 正面因素（加分）
+    /// - **高流量**: 靠近河流的位置（水源充足）
+    ///   - bonus = flux * flux_score_bonus
+    ///
+    /// ## 负面因素（扣分）
+    /// - **靠近地图边缘**: 边缘位置不适合建城
+    ///   - penalty = near_edge_score_penalty * (1 - distance/max_distance)
+    ///
+    /// - **靠近其他城市**: 城市之间需要保持距离
+    ///   - penalty = near_city_score_penalty * (1 - distance/max_distance)
+    ///
+    /// - **靠近城镇**: 避免城市和城镇过于接近
+    ///   - penalty = near_town_score_penalty * (1 - distance/max_distance)
+    ///
+    /// # 返回
+    /// 每个节点的城市得分（越高越好）
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, getCityScores()
     fn get_city_scores(&mut self) -> NodeMap<f64> {
         let mut relaxed_flux = self.flux_map.clone();
         relaxed_flux.relax(&self.vertex_map, &self.voronoi);
@@ -1128,6 +1541,37 @@ impl MapGenerator {
         d1.min(d2).min(d3).min(d4)
     }
 
+    /// 更新城市的移动成本图
+    ///
+    /// 使用 Dijkstra 算法计算从城市到每个节点的移动成本。
+    /// 移动成本用于划分领土：每个节点属于移动成本最低的城市。
+    ///
+    /// # 移动成本因素
+    ///
+    /// ## 基础成本
+    /// - **陆地距离**: land_distance_cost * 距离
+    /// - **海洋距离**: sea_distance_cost * 距离（通常更高）
+    ///
+    /// ## 地形成本
+    /// - **上坡**: uphill_cost * 高度差（上坡困难）
+    /// - **下坡**: downhill_cost * 高度差（下坡容易）
+    ///
+    /// ## 特殊成本
+    /// - **穿越河流**: flux_cost * 流量（河流越大越难穿越）
+    /// - **陆海转换**: land_transition_cost（上船/下船的成本）
+    ///
+    /// # 算法
+    /// 使用 Dijkstra 最短路径算法：
+    /// 1. 初始化：城市位置成本为 0，其他为无穷大
+    /// 2. 使用优先队列按成本从小到大处理节点
+    /// 3. 对每个节点，更新其邻居的成本
+    /// 4. 重复直到所有节点处理完毕
+    ///
+    /// # 参数
+    /// * `city` - 要更新移动成本的城市
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, updateCityMovementCost()
     fn update_city_movement_cost(&mut self, city: &mut City) {
         let face_heights = self.compute_face_values(&self.height_map.clone());
         let face_flux = self.compute_face_values(&self.flux_map.clone());
@@ -1283,7 +1727,7 @@ impl MapGenerator {
             if group.contains(&cfidx) { continue; }
             // Find the majority neighbor
             let mut nb_counts = vec![0i32; self.cities.len()];
-            let mut group_set: std::collections::HashSet<usize> = group.iter().copied().collect();
+            let group_set: std::collections::HashSet<usize> = group.iter().copied().collect();
             for &fidx in group {
                 for &nidx in &self.face_neighbours[fidx] {
                     if group_set.contains(&nidx) { continue; }
@@ -1869,6 +2313,60 @@ impl MapGenerator {
         }
     }
 
+    /// 生成标签布局（模拟退火算法）
+    ///
+    /// 使用模拟退火算法优化标签的放置位置，
+    /// 最小化标签之间的重叠和与地图元素的冲突。
+    ///
+    /// # 算法原理（模拟退火）
+    ///
+    /// 模拟退火是一种概率优化算法，模拟金属退火过程：
+    /// 1. 高温时：接受大部分变化（包括变差的）
+    /// 2. 降温时：逐渐只接受变好的变化
+    /// 3. 低温时：几乎只接受变好的变化
+    ///
+    /// # 算法步骤
+    ///
+    /// 1. **初始化**
+    ///    - 为每个标签随机选择一个候选位置
+    ///    - 设置初始温度 T = 1/log(3)（使初始接受概率为 2/3）
+    ///
+    /// 2. **迭代优化**（直到收敛）
+    ///    - 降低温度：T = T * (1 - annealing_factor)
+    ///    - 尝试 20*n 次标签重新定位：
+    ///      a) 随机选择一个标签
+    ///      b) 随机选择该标签的一个新候选位置
+    ///      c) 计算得分变化 ΔE
+    ///      d) 如果变差，以概率 P = exp(ΔE/T) 接受变化
+    ///      e) 如果变好，总是接受
+    ///
+    /// 3. **终止条件**
+    ///    - 连续 20*n 次尝试都没有成功重新定位
+    ///    - 或达到最大温度变化次数
+    ///
+    /// # 得分计算
+    ///
+    /// 配置得分 = 平均基础得分 - 重叠惩罚
+    ///
+    /// - **基础得分**: 每个标签候选位置的预计算得分
+    /// - **重叠惩罚**: overlap_score_penalty * 重叠标签对数量
+    ///
+    /// # 为什么使用模拟退火
+    ///
+    /// 标签放置是一个 NP 难问题，暴力搜索不可行。
+    /// 模拟退火能够：
+    /// - 避免陷入局部最优
+    /// - 在合理时间内找到较好的解
+    /// - 平衡全局搜索和局部优化
+    ///
+    /// # 参数
+    /// * `labels` - 要优化的标签列表
+    ///
+    /// # 参考来源
+    /// - S. Edmondson et al., "A General Cartographic Labeling Algorithm", MERL, 1996
+    /// - J. Christensen et al., "An empirical study of algorithms for
+    ///   point-feature label placement", TOG, 1995
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, generateLabelPlacements()
     fn generate_label_placements(&mut self, labels: &mut Vec<Label>) {
         // Randomize initial placements
         for label in labels.iter_mut() {
@@ -1978,6 +2476,36 @@ impl MapGenerator {
     }
 
     // ----- main output -----
+    /// 获取地图绘图数据
+    ///
+    /// 生成包含所有地图元素的 JSON 数据，用于渲染地图。
+    ///
+    /// # 返回的 JSON 结构
+    /// ```json
+    /// {
+    ///   "extents": [minx, miny, maxx, maxy],
+    ///   "size": [width, height],
+    ///   "contour": [[x1, y1, x2, y2, ...], ...],
+    ///   "rivers": [[x1, y1, x2, y2, ...], ...],
+    ///   "slopes": [x1, y1, angle1, length1, ...],
+    ///   "borders": [[x1, y1, x2, y2, ...], ...],
+    ///   "cities": [{name, territory, position, radius}, ...],
+    ///   "towns": [{name, position, radius}, ...],
+    ///   "labels": [{text, fontface, fontsize, position, extents, ...}, ...]
+    /// }
+    /// ```
+    ///
+    /// # 算法流程
+    /// 1. 确保地形已侵蚀
+    /// 2. 生成等高线数据
+    /// 3. 生成河流数据
+    /// 4. 生成坡度阴影数据
+    /// 5. 生成领土边界数据
+    /// 6. 生成标签数据（使用模拟退火算法优化布局）
+    /// 7. 将所有数据序列化为 JSON
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, getDrawData()
     pub fn get_draw_data(&mut self) -> String {
         self.ensure_eroded();
 

@@ -1,0 +1,2 @@
+# 此文件确保 examples 目录被 git 跟踪
+# 但目录中的 .json 和 .png 文件会被忽略

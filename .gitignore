@@ -1,0 +1,25 @@
+# Build output
+build/
+output/
+
+# Third-party dependencies
+third_party/emsdk/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+*.o
+*.obj
+
+# Generated resource files
+src/resources.h
