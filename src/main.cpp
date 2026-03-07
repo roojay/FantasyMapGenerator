@@ -4,11 +4,13 @@
 #include <iostream>
 #include <sstream>
 #include <random>
+#include <fstream>
 
 #include "mapgenerator.h"
 #include "render.h"
 #include "config.h"
 #include "stopwatch.h"
+#include "json.hpp"
 
 double randomDouble(double min, double max) {
     return min + (double)rand() / ((double)RAND_MAX / (max - min));
@@ -31,67 +33,49 @@ void outputMap(gen::MapGenerator &map) {
     gen::config::print("Generating map draw data...");
     StopWatch timer;
     timer.start();
-    std::vector<char> drawdata = map.getDrawData();
+    std::string drawdata = map.getDrawData();
     timer.stop();
     gen::config::print("Finished Generating map draw data in " +
                        gen::config::toString(timer.getTime()) + " seconds.\n");
 
     std::string outfile = gen::config::outfile;
     std::string outfileExt = gen::config::outfileExt;
-    #ifdef PYTHON_RENDERING_SUPPORTED
-        if (outfileExt != std::string(".png")) {
-            outfile += ".png";
-        }
+    if (outfileExt != std::string(".json")) {
+        outfile += ".json";
+    }
 
-        timer.reset();
-        timer.start();
-        gen::config::print("Drawing map...");
-        gen::render::drawMap(drawdata, outfile);
-        timer.stop();
-        gen::config::print("Finished drawing map in " +
-                           gen::config::toString(timer.getTime()) + " seconds.\n");
+    timer.reset();
+    timer.start();
+    gen::config::print("Writing map data...");
+    gen::render::drawMap(drawdata, outfile);
+    timer.stop();
+    gen::config::print("Finished writing map data in " +
+                       gen::config::toString(timer.getTime()) + " seconds.\n");
 
-        gen::config::print("Wrote map to image: " + outfile);
-    #else
-        if (outfileExt != std::string(".json")) {
-            outfile += ".json";
-        }
-
-        std::ofstream file(outfile);
-        file << std::string(drawdata.data());
-        file.close();
-
-        std::string msg("Project build without drawing support. Install Python "
-                        "and the Pycairo graphics library "
-                        "(http://cairographics.org/pycairo/) to enable drawing "
-                        "support.\nWrote map draw data to file: " + outfile);
-        gen::config::print(msg);
-
-    #endif
+    gen::config::print("Wrote map data to: " + outfile);
+    gen::config::print("Open viewer.html in a browser to render the map.");
 }
 
 std::vector<std::string> getLabelNames(int num) {
     std::ifstream file(gen::resources::getCityDataResource());
-    std::string jsonstr((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
-    jsoncons::json json = jsoncons::json::parse(jsonstr);
+    nlohmann::json json = nlohmann::json::parse(file);
 
     std::vector<std::string> countries;
-    for (const auto& member : json.members()) {
-        countries.push_back(member.name());
+    for (auto& [key, value] : json.items()) {
+        countries.push_back(key);
     }
 
     std::vector<std::string> cities;
     while ((int)cities.size() < num) {
         int randidx = rand() % (int)countries.size();
         std::string country = countries[randidx];
-        for (const auto& member : json[country].elements()) {
-            cities.push_back(member.as<std::string>());
+        for (auto& city : json[country]) {
+            cities.push_back(city.get<std::string>());
         }
     }
 
     std::string temp;
-    for (int i = cities.size() - 2; i >= 0; i--) {
+    for (int i = static_cast<int>(cities.size()) - 2; i >= 0; i--) {
         int j = (rand() % (int)(i - 0 + 1));
         temp = cities[i];
         cities[i] = cities[j];

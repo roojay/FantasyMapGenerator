@@ -17,7 +17,7 @@ gen::VertexMap::VertexMap(dcel::DCEL *V, Extents2d extents) :
         }
 
         vertices.push_back(v);
-        _vertexIdToMapIndex[v.id.ref] = vertices.size() - 1;
+        _vertexIdToMapIndex[v.id.ref] = static_cast<int>(vertices.size()) - 1;
 
         if (_getVertexType(v) == VertexType::interior) {
             interior.push_back(v);
@@ -30,7 +30,7 @@ gen::VertexMap::VertexMap(dcel::DCEL *V, Extents2d extents) :
 }
 
 unsigned int gen::VertexMap::size() {
-    return vertices.size();
+    return static_cast<unsigned int>(vertices.size());
 }
 
 void gen::VertexMap::getNeighbours(dcel::Vertex v, 

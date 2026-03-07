@@ -1,24 +1,90 @@
 # Fantasy Map Generator
 
+> **🔱 Fork Notice**: This is a fork with Rust implementation and modernized build system.
+> 
+> **Original Repository**: [rlguy/FantasyMapGenerator](https://github.com/rlguy/FantasyMapGenerator)
+
+## 🎯 What's New in This Fork
+
+### ✨ Major Enhancements
+
+1. **🦀 Rust Implementation**
+   - Complete Rust rewrite with modern architecture
+   - WebGPU-based rendering (no Python dependencies)
+   - Better performance and memory safety
+   - See [Rust README](rust/README.md)
+
+2. **📁 Improved Project Structure**
+   - Organized directory layout following best practices
+   - Separated Rust and C++ implementations
+   - Better dependency management
+
+3. **🔧 Enhanced Build System**
+   - Simplified build process with Cargo (Rust)
+   - Cross-platform support (Linux/Mac/Windows)
+   - Modern tooling and testing
+   - Dedicated build scripts: `build_rust.sh/bat` and `build_cpp.sh/bat`
+
+4. **📚 Comprehensive Documentation**
+   - Detailed Rust implementation guide
+   - Project structure documentation
+   - Quick start guides
+
+### 🚀 Quick Start (Rust)
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd FantasyMapGenerator/rust
+
+# Build and run
+cargo run --release --features render -- --seed 12345
+
+# Or use the build script
+# Linux/Mac: ./scripts/build_rust.sh
+# Windows: .\scripts\build_rust.bat
+
+# Output files will be in rust/examples/ directory
+```
+
+### 🔄 Changes from Original
+
+- ✅ Added complete Rust implementation with WebGPU rendering
+- ✅ Improved random number generation (PCG algorithm)
+- ✅ Reorganized project structure following best practices
+- ✅ Updated documentation with detailed guides
+- ✅ Improved cross-platform build scripts
+- ✅ Maintained backward compatibility with original C++ version
+
+### 📖 Documentation
+
+- [Rust Implementation Guide](rust/README.md)
+- [C++ Build Guide](docs/CPP.md)
+
+---
+
+## Original README
+
 This program is an implementation of a fantasy map generator written in C++ based on the methods described in Martin O'Leary's "Generating fantasy map" notes (https://mewo2.com/notes/terrain/). 
 
 This project uses [jsoncons](https://github.com/danielaparker/jsoncons) for parsing JSON data, [Argtable3](http://www.argtable.org/) for parsing command line arguments, [Python](https://www.python.org/) and [PyCairo](https://cairographics.org/pycairo/) for drawing, and data from [GeoNames](http://www.geonames.org/) for city name data.
 
 The project page and generation notes are also available here: [http://rlguy.com/map_generation](http://rlguy.com/map_generation)
 
-[![alt tag](http://rlguy.com/map_generation/images/example_small.jpg)](http://rlguy.com/map_generation/images/example_large.jpg)
+<!-- Original images from: http://rlguy.com/map_generation/images/ -->
+[![http://rlguy.com/map_generation/images/example_small.jpg](docs/images/example_small.jpg)](docs/images/example_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery00_small.jpg)](http://rlguy.com/map_generation/images/gallery00_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery00_small.jpg](docs/images/gallery00_small.jpg)](docs/images/gallery00_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery01_small.jpg)](http://rlguy.com/map_generation/images/gallery01_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery01_small.jpg](docs/images/gallery01_small.jpg)](docs/images/gallery01_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery02_small.jpg)](http://rlguy.com/map_generation/images/gallery02_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery02_small.jpg](docs/images/gallery02_small.jpg)](docs/images/gallery02_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery03_small.jpg)](http://rlguy.com/map_generation/images/gallery03_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery03_small.jpg](docs/images/gallery03_small.jpg)](docs/images/gallery03_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery05_small.jpg)](http://rlguy.com/map_generation/images/gallery05_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery05_small.jpg](docs/images/gallery05_small.jpg)](docs/images/gallery05_large.jpg)
 
-[![alt tag](http://rlguy.com/map_generation/images/gallery04_small.jpg)](http://rlguy.com/map_generation/images/gallery04_large.jpg)
+[![http://rlguy.com/map_generation/images/gallery04_small.jpg](docs/images/gallery04_small.jpg)](docs/images/gallery04_large.jpg)
 
 # Dependencies
 
@@ -63,16 +129,22 @@ Once successfully built, the program will be located in the ```build/``` directo
 
 The map generator is a command line tool and can be invoked with the command:
 
+**Linux/Mac:**
 ```
-./map_generator [OPTIONS]
+./build/map_generation [OPTIONS]
 ```
 
-Leaving the options blank will generate a high quality map with resolution ```1920x1080``` to the file ```output.png```.
+**Windows:**
+```
+.\build\map_generation.exe [OPTIONS]
+```
+
+Leaving the options blank will generate map data with resolution ```1920x1080``` to the file ```output.json```.
 
 A set of options can be displayed with the ```--help``` flag:
 
  ```
- >>> ./map_generator --help
+ >>> ./build/map_generation --help
 
 Usage: map_generation [-hv] [-s <uint>] [--timeseed] [-r <float>] [-o filename] 
 [<file>] [-e <float>] [--erosion-steps=<int>] [-c <int>] [-t <int>] 
@@ -109,9 +181,19 @@ Options:
 
 Example:
 
-The following command will output program information to the screen (-v), will set the random generator seed to your current system time (--timeseed), will set the resolution to 0.08 (-r 0.08), and write the generated map to the file ```fantasy_map.png``` (-o fantasy_map.png).
+The following command will output program information to the screen (-v), will set the random generator seed to your current system time (--timeseed), will set the resolution to 0.08 (-r 0.08), and write the generated map data to the file ```fantasy_map.json``` (-o fantasy_map.json).
 
-```./map_generation.exe -v --timeseed -r 0.08 -o fantasy_map.png```
+**Linux/Mac:**
+```bash
+./build/map_generation -v --timeseed -r 0.08 -o fantasy_map.json
+```
+
+**Windows:**
+```cmd
+.\build\map_generation.exe -v --timeseed -r 0.08 -o fantasy_map.json
+```
+
+**Note:** The C++ version outputs JSON data only. For PNG rendering, use the Rust version or implement your own renderer.
 
 # Map Generation Process
 
@@ -120,17 +202,17 @@ The map generation process involves the generation of irregular grids, the gener
 ## Generating Irregular Grids
 
 A Poisson disc sampler generates a set of random points with the property that no two points are within some set radius of eachother.
-![alt tag](http://rlguy.com/map_generation/images/uniform_vs_poisson_sampling.jpg)
+![http://rlguy.com/map_generation/images/uniform_vs_poisson_sampling.jpg](docs/images/uniform_vs_poisson_sampling.jpg)
 
 The set of points are triangulated in a Delaunay triangulation. The triangulation is stored in a doubly connected edge list (DCEL) data structure.
-![alt tag](http://rlguy.com/map_generation/images/uniform_vs_poisson_delaunay.jpg)
+![http://rlguy.com/map_generation/images/uniform_vs_poisson_delaunay.jpg](docs/images/uniform_vs_poisson_delaunay.jpg)
 
 The dual of the Delaunay triangulation is computed to produce a Voronoi diagram, which is also stored as a DCEL.
-![alt tag](http://rlguy.com/map_generation/images/uniform_vs_poisson_voronoi.jpg)
+![http://rlguy.com/map_generation/images/uniform_vs_poisson_voronoi.jpg](docs/images/uniform_vs_poisson_voronoi.jpg)
 
 Each vertex in the Delaunay triangulation becomes a face in the Voronoi diagram, and each triangle in the Delaunay triangulation becomes a vertex in the Voronoi diagram. A triangle is transformed into a vertex by fitting a circle to the three triangle vertices and setting the circle's center as the position of a Voronoi vertex. The following image displays the relationship between a Delaunay triangulation and a Voronoi diagram.
 
-![alt tag](http://rlguy.com/map_generation/images/voronoi_delaunay_overlay.jpg)
+![http://rlguy.com/map_generation/images/voronoi_delaunay_overlay.jpg](docs/images/voronoi_delaunay_overlay.jpg)
 
 The vertices of the Voronoi diagram will be used as the nodes in an irregular grid. Note that each node has exactly three neighbours.
 
@@ -147,53 +229,53 @@ and a set of operations:
 - relax - Replace height values with the average of their neighbours
 - setSeaLevel - Translate the height map so that the new sea level is at zero
 
-![alt tag](http://rlguy.com/map_generation/images/heightmap_primitives.jpg)
+![http://rlguy.com/map_generation/images/heightmap_primitives.jpg](docs/images/heightmap_primitives.jpg)
 
 Contour lines are generated from the Voronoi edges. If a contour line is generated for some elevation h, a Voronoi edge will be included in the countour if one of its adjacent faces has a height less than h while the other has a height greater than or equal to h.
 
-![alt tag](http://rlguy.com/map_generation/images/heightmap_contour.jpg)
+![http://rlguy.com/map_generation/images/heightmap_contour.jpg](docs/images/heightmap_contour.jpg)
 
 A flow map is generated by tracing the route that water would flow over the map. At each point on the grid, a path must be traced downhill to the edge of the map. This means that there can be no sinks or depressions within the height map. Depressions are filled by using the [Planchon-Darboux Algorithm](http://horizon.documentation.ird.fr/exl-doc/pleins_textes/pleins_textes_7/sous_copyright/010031925.pdf) to ensure that a path to the edge of the map exists for all grid points.
 
-![alt tag](http://rlguy.com/map_generation/images/flowmap.jpg)
+![http://rlguy.com/map_generation/images/flowmap.jpg](docs/images/flowmap.jpg)
 
 The height map is then eroded by using the flow map data and terrain slope data.
 
-![alt tag](http://rlguy.com/map_generation/images/erosion_process.jpg)
+![http://rlguy.com/map_generation/images/erosion_process.jpg](docs/images/erosion_process.jpg)
 
 Paths representing rivers are generated at points where the amount of flux (river current) is above some threshold. The path of the river follows the flow map until it reaches a coastline or the edge of the map.
 
-![alt tag](http://rlguy.com/map_generation/images/river_generation.jpg)
+![http://rlguy.com/map_generation/images/river_generation.jpg](docs/images/river_generation.jpg)
 
 The height map is shaded based upon the horizontal component of the slope. Short strokes are drawn at faces where the slope is above some threshold. Strokes pointing upwards from left to right are drawn if the height map is sloping upward from left to right, and strokes pointing downward from left to right are drawn if the height map is sloping downward from left to right.
 
-![alt tag](http://rlguy.com/map_generation/images/slope_shading.jpg)
+![http://rlguy.com/map_generation/images/slope_shading.jpg](docs/images/slope_shading.jpg)
 
 ## Generating Cities and Borders
 
 City score values are computed to determine the location of a city and have a bonus at locations where there is a high flux value and a penalty at locations that are too close to other cities or too close to the edge of the map.
 
-![alt tag](http://rlguy.com/map_generation/images/city_scores.jpg)
+![http://rlguy.com/map_generation/images/city_scores.jpg](docs/images/city_scores.jpg)
 
 Cities are placed at locations where the city score value is at a maximum.
 
-![alt tag](http://rlguy.com/map_generation/images/city_locations.jpg)
+![http://rlguy.com/map_generation/images/city_locations.jpg](docs/images/city_locations.jpg)
 
 For each city, the movement cost is calculated at each tile (Voronoi face). Movement costs are based on horizontal and vertical distance, amount of flux (crossing rivers), and transitioning from land to sea (or sea to land).
 
-![alt tag](http://rlguy.com/map_generation/images/movement_costs.jpg)
+![http://rlguy.com/map_generation/images/movement_costs.jpg](docs/images/movement_costs.jpg)
 
 The tiles are then divided amongst the cities depending on who has the lowest movement cost for the tile.
 
-![alt tag](http://rlguy.com/map_generation/images/territories_unclean.jpg)
+![http://rlguy.com/map_generation/images/territories_unclean.jpg](docs/images/territories_unclean.jpg)
 
 This method tends to create jagged borders and disjointed territories. The territories are cleaned up by smoothing the edges and by adding a rule that a city territory must contain the city and be a contiguous region.
 
-![alt tag](http://rlguy.com/map_generation/images/territories_clean.jpg)
+![http://rlguy.com/map_generation/images/territories_clean.jpg](docs/images/territories_clean.jpg)
 
 Borders are then generated around the city territories.
 
-![alt tag](http://rlguy.com/map_generation/images/territory_borders.jpg)
+![http://rlguy.com/map_generation/images/territory_borders.jpg](docs/images/territory_borders.jpg)
 
 Towns can be added to the map by using the same process that is used to generate city locations. Towns are contained within the city territories and are not involved in territory/border generation.
 
@@ -207,15 +289,15 @@ The labeling process begins by generating candidate label positions for the mark
 
 Marker label candidates are generated around a city or town marker. The calculated scores depend on orientation about the marker, how many river, border, and contour lines the label overlaps, whether the label overlaps another marker, and whether the marker is contained within the map.
 
-![alt tag](http://rlguy.com/map_generation/images/marker_label_candidates.jpg)
+![http://rlguy.com/map_generation/images/marker_label_candidates.jpg](docs/images/marker_label_candidates.jpg)
 
 Area label candidates are generated within territory boundaries. The calculated scores are similar to the marker label scores except that the orientation score is based upon how much of the label is contained within the territory that it names.
 
-![alt tag](http://rlguy.com/map_generation/images/area_label_candidates.jpg)
+![http://rlguy.com/map_generation/images/area_label_candidates.jpg](docs/images/area_label_candidates.jpg)
 
 The number of area label candidates is then narrowed down by selecting only the candidates with the best scores.
 
-![alt tag](http://rlguy.com/map_generation/images/area_label_candidates_refined.jpg)
+![http://rlguy.com/map_generation/images/area_label_candidates_refined.jpg](docs/images/area_label_candidates_refined.jpg)
 
 After all candidates for the marker and area labels have been generated, the final label candidates are selected by running the following algorithm: 
 
@@ -238,9 +320,9 @@ The temperature decreases by 10% after 20\*n label repositioning attemps are mad
 
 The following set of images show the initial labeling, the labeling halfway through the algorithm, and the final labeling:
 
-![alt tag](http://rlguy.com/map_generation/images/label_placements0.jpg)
-![alt tag](http://rlguy.com/map_generation/images/label_placements1.jpg)
-![alt tag](http://rlguy.com/map_generation/images/label_placements2.jpg)
+![http://rlguy.com/map_generation/images/label_placements0.jpg](docs/images/label_placements0.jpg)
+![http://rlguy.com/map_generation/images/label_placements1.jpg](docs/images/label_placements1.jpg)
+![http://rlguy.com/map_generation/images/label_placements2.jpg](docs/images/label_placements2.jpg)
 
 # References
 

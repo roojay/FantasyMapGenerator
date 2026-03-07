@@ -21,7 +21,7 @@
 #include "config.h"
 #include "stopwatch.h"
 
-#include "jsoncons/json.hpp"
+#include "json.hpp"
 
 #if defined(_WIN32)
     #undef max
@@ -55,7 +55,7 @@ public:
 
     void outputVoronoiDiagram(std::string filename);
     void outputHeightMap(std::string filename);
-    std::vector<char> getDrawData();
+    std::string getDrawData();
 
     Extents2d getExtents();
     void setDrawScale(double scale);
@@ -156,7 +156,7 @@ private:
     void _initializeFaceNeighbours();
     void _initializeFaceVertices();
     void _initializeFaceEdges();
-    jsoncons::json _getExtentsJSON();
+    nlohmann::json _getExtentsJSON();
     void _outputVertices(std::vector<dcel::Vertex> &verts, 
                          std::string filename);
     std::vector<double> _computeFaceValues(NodeMap<double> &heightMap);
@@ -248,7 +248,7 @@ private:
                                   std::vector<bool> &isVertexProcessed,
                                   VertexList &path);
 
-    void _getLabelDrawData(std::vector<jsoncons::json> &data);
+    void _getLabelDrawData(std::vector<nlohmann::json> &data);
     void _initializeLabels(std::vector<Label> &labels);
     void _initializeMarkerLabels(std::vector<Label> &labels);
     void _initializeAreaLabels(std::vector<Label> &labels);
@@ -265,7 +265,7 @@ private:
     dcel::Point _getMapCoordinates(dcel::Point &p);
     Extents2d _getTextExtents(std::string text, dcel::Point pos);
     std::vector<Extents2d> _getCharacterExtents(std::string text, dcel::Point pos);
-    jsoncons::json _getLabelJSON(LabelCandidate &label);
+    nlohmann::json _getLabelJSON(LabelCandidate &label);
     dcel::Point _normalizeMapCoordinate(dcel::Point &p);
     dcel::Point _normalizeMapCoordinate(double x, double y);
     std::vector<LabelOffset> _getLabelOffsets(Label label, double radius);

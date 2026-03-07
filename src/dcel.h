@@ -78,21 +78,21 @@ public:
 
 	inline Vertex createVertex(double px, double py) {
 		Vertex vert(px, py);
-	    vert.id = Ref(vertices.size());
+	    vert.id = Ref(static_cast<int>(vertices.size()));
 		vertices.push_back(vert);
 		return vert;
 	}
 
 	inline HalfEdge createHalfEdge() {
 		HalfEdge edge;
-		edge.id = Ref(edges.size());
+		edge.id = Ref(static_cast<int>(edges.size()));
 		edges.push_back(edge);
 		return edge;
 	}
 
 	inline Face createFace() {
 		Face face;
-		face.id = Ref(faces.size());
+		face.id = Ref(static_cast<int>(faces.size()));
 		faces.push_back(face);
 		return face;
 	}
@@ -201,47 +201,47 @@ public:
 	}
 
 	inline bool _isVertexInRange(Vertex &v) {
-		return v.id.ref >= 0 && v.id.ref < (int)vertices.size();
+		return v.id.ref >= 0 && v.id.ref < static_cast<int>(vertices.size());
 	}
 
 	inline bool _isVertexInRange(Ref &id) {
-		return id.ref >= 0 && id.ref < (int)vertices.size();
+		return id.ref >= 0 && id.ref < static_cast<int>(vertices.size());
 	}
 
 	inline bool _isVertexInRange(int id) {
-		return id >= 0 && id < (int)vertices.size();
+		return id >= 0 && id < static_cast<int>(vertices.size());
 	}
 
 	inline bool _isHalfEdgeInRange(HalfEdge &h) {
-		return h.id.ref >= 0 && h.id.ref < (int)edges.size();
+		return h.id.ref >= 0 && h.id.ref < static_cast<int>(edges.size());
 	}
 
 	inline bool _isHalfEdgeInRange(Ref &id) {
-		return id.ref >= 0 && id.ref < (int)edges.size();
+		return id.ref >= 0 && id.ref < static_cast<int>(edges.size());
 	}
 
 	inline bool _isHalfEdgeInRange(int id) {
-		return id >= 0 && id < (int)edges.size();
+		return id >= 0 && id < static_cast<int>(edges.size());
 	}
 
 	inline bool _isFaceInRange(Face &f) {
-		return f.id.ref >= 0 && f.id.ref < (int)faces.size();
+		return f.id.ref >= 0 && f.id.ref < static_cast<int>(faces.size());
 	}
 
 	inline bool _isFaceInRange(Ref &id) {
-		return id.ref >= 0 && id.ref < (int)faces.size();
+		return id.ref >= 0 && id.ref < static_cast<int>(faces.size());
 	}
 
 	inline bool _isFaceInRange(int id) {
-		return id >= 0 && id < (int)faces.size();
+		return id >= 0 && id < static_cast<int>(faces.size());
 	}
 
-	void getOuterComponents(Face f, std::vector<HalfEdge> &edges);
-	void getOuterComponents(Face f, std::vector<Ref> &edges);
-	void getIncidentEdges(Vertex v, std::vector<HalfEdge> &edges);
-	void getIncidentEdges(Vertex v, std::vector<Ref> &edges);
-	void getIncidentFaces(Vertex v, std::vector<Face> &faces);
-	void getIncidentFaces(Vertex v, std::vector<Ref> &faces);
+	void getOuterComponents(Face f, std::vector<HalfEdge> &edgeList);
+	void getOuterComponents(Face f, std::vector<Ref> &edgeList);
+	void getIncidentEdges(Vertex v, std::vector<HalfEdge> &edgeList);
+	void getIncidentEdges(Vertex v, std::vector<Ref> &edgeList);
+	void getIncidentFaces(Vertex v, std::vector<Face> &faceList);
+	void getIncidentFaces(Vertex v, std::vector<Ref> &faceList);
 	bool isBoundary(HalfEdge h);
 
 	std::vector<Vertex> vertices;

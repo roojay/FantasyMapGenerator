@@ -7,7 +7,7 @@
 #include <string>
 #include <sstream>
 
-#include "jsoncons/json.hpp"
+#include "json.hpp"
 
 namespace gen {
 
@@ -44,7 +44,7 @@ private:
     int _stringToInt(std::string number);
     TextExtents _getCharExtents(char c);
 
-    jsoncons::json _jsonData;
+    nlohmann::json _jsonData;
 
     std::string _defaultFont;
     std::string _defaultFontSize;

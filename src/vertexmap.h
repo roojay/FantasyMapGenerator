@@ -8,7 +8,7 @@
 #include "extents2d.h"
 #include "dcel.h"
 
-#include "jsoncons/json.hpp"
+#include "json.hpp"
 
 namespace gen {
 

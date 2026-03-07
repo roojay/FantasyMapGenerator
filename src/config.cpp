@@ -143,11 +143,11 @@ bool _setOptions(OptionArgs opts) {
     return true;
 }
 
-bool _setSeed(arg_lit *timeseed, arg_str *seed) {
+bool _setSeed(arg_lit *timeseed, arg_str *seedArg) {
     if (timeseed->count > 0) {
         gen::config::seed = (unsigned int)time(NULL);
-    } else if (seed->count > 0) {
-        std::istringstream istr(seed->sval[0]);
+    } else if (seedArg->count > 0) {
+        std::istringstream istr(seedArg->sval[0]);
         istr >> gen::config::seed;
     }
 
@@ -377,8 +377,8 @@ bool _disableAreaLabels(arg_lit *noarealabels) {
     return true;
 }
 
-bool _setVerbosity(arg_lit *verbose) {
-    if (verbose->count > 0) {
+bool _setVerbosity(arg_lit *verboseArg) {
+    if (verboseArg->count > 0) {
         gen::config::verbose = true;
     }
 

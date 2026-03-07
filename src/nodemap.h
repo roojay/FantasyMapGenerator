@@ -223,7 +223,7 @@ public:
         }
 
         std::sort(values.begin(), values.end());
-        int mididx = values.size() / 2;
+        int mididx = static_cast<int>(values.size()) / 2;
         double median;
         if (values.size() % 2 == 0) {
             median = 0.5 * (values[mididx - 1] + values[mididx]);

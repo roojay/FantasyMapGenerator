@@ -24,7 +24,7 @@ std::vector<dcel::Point> PoissonDiscSampler::generateSamples(Extents2d bounds,
     grid.setSample(g, 0);
 
     while (!activeList.empty()) {
-        int randidx = _randomRange(0, activeList.size());
+        int randidx = _randomRange(0, static_cast<int>(activeList.size()));
         int pidx = activeList[randidx];
         Point p = points[pidx];
 
@@ -36,12 +36,12 @@ std::vector<dcel::Point> PoissonDiscSampler::generateSamples(Extents2d bounds,
             continue;
         }
 
-        int newidx = points.size();
+        int newidx = static_cast<int>(points.size());
         activeList.push_back(newidx);
         points.push_back(newPoint);
 
-        GridIndex g = grid.getCell(newPoint);
-        grid.setSample(g, newidx);
+        GridIndex newG = grid.getCell(newPoint);
+        grid.setSample(newG, newidx);
     }
     
     return points;
@@ -107,12 +107,12 @@ bool PoissonDiscSampler::_isSampleValid(dcel::Point &p, double r,
     double rsq = r*r;
     for (int j = minj; j <= maxj; j++) {
         for (int i = mini; i <= maxi; i++) {
-            int sampleid = grid.getSample(i, j);
-            if (sampleid == -1) {
+            int currentSampleId = grid.getSample(i, j);
+            if (currentSampleId == -1) {
                 continue;
             }
 
-            Point o = points[sampleid];
+            Point o = points[currentSampleId];
             double dx = p.x - o.x;
             double dy = p.y - o.y;
             double distsq = dx*dx + dy*dy;

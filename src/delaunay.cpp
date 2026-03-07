@@ -347,7 +347,7 @@ void Delaunay::_insertPointIntoTriangle(dcel::Point p, dcel::Face f, dcel::DCEL 
     _legalizeEdge(pr, eki, T);
 }
 
-void Delaunay::_insertPointIntoTriangleEdge(dcel::Point p, dcel::Face f, 
+void Delaunay::_insertPointIntoTriangleEdge(dcel::Point p, dcel::Face /*f*/, 
                                             dcel::HalfEdge h, dcel::DCEL &T) {
     // existing components
     HalfEdge eij = h;

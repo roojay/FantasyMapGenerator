@@ -237,7 +237,7 @@ void gen::MapGenerator::outputVoronoiDiagram(std::string filename) {
     if (!_isInitialized) {
         throw std::runtime_error("MapGenerator must be initialized.");
     }
-    using jsoncons::json;
+    using nlohmann::json;
 
     std::vector<std::vector<double> > faceVertices;
     faceVertices.reserve(_voronoi.faces.size());
@@ -289,7 +289,7 @@ void gen::MapGenerator::outputHeightMap(std::string filename) {
         facecolors[i] = (facecolors[i] - min) / (max - min);
     }
 
-    jsoncons::json output;
+    nlohmann::json output;
     output["colors"] = facecolors;
 
     std::ofstream file(filename);
@@ -297,7 +297,7 @@ void gen::MapGenerator::outputHeightMap(std::string filename) {
     file.close();
 }
 
-std::vector<char> gen::MapGenerator::getDrawData() {
+std::string gen::MapGenerator::getDrawData() {
     if (!_isInitialized) {
         throw std::runtime_error("MapGenerator must be initialized.");
     }
@@ -340,12 +340,12 @@ std::vector<char> gen::MapGenerator::getDrawData() {
         territoryData.clear();
     }
 
-    std::vector<jsoncons::json> labelData;
+    std::vector<nlohmann::json> labelData;
     if (_isLabelsEnabled) {
         _getLabelDrawData(labelData);
     }
 
-    jsoncons::json output;
+    nlohmann::json output;
     output["image_width"] = _imgwidth;
     output["image_height"] = _imgheight;
     output["draw_scale"] = _drawScale;
@@ -357,11 +357,7 @@ std::vector<char> gen::MapGenerator::getDrawData() {
     output["territory"] = territoryData;
     output["label"] = labelData;
 
-    std::string strout = output.as<std::string>();
-    std::vector<char> charvect(strout.begin(), strout.end());
-    charvect.push_back('\0');
-
-    return charvect;
+    return output.dump();
 }
 
 Extents2d gen::MapGenerator::getExtents() {
@@ -573,12 +569,14 @@ void gen::MapGenerator::_initializeFaceEdges() {
     }
 }
 
-jsoncons::json gen::MapGenerator::_getExtentsJSON() {
-    jsoncons::json extents;
+nlohmann::json gen::MapGenerator::_getExtentsJSON() {
+    nlohmann::json extents;
     extents["minx"] = _extents.minx;
     extents["miny"] = _extents.miny;
     extents["maxx"] = _extents.maxx;
     extents["maxy"] = _extents.maxy;
+    extents["width"] = _imgwidth;
+    extents["height"] = _imgheight;
 
     return extents;
 }
@@ -592,7 +590,7 @@ void gen::MapGenerator::_outputVertices(VertexList &verts,
         coordinates.push_back(verts[i].position.y);
     }
 
-    jsoncons::json output;
+    nlohmann::json output;
     output["vertices"] = coordinates;
     output["extents"] = _getExtentsJSON();
 
@@ -800,7 +798,7 @@ double gen::MapGenerator::_calculateFluxCap(NodeMap<double> &fluxMap) {
         double f = fluxMap(i);
         int binidx = (int)floor(f * invstep);
         if (binidx >= (int)bins.size()) {
-            binidx = bins.size() - 1;
+            binidx = static_cast<int>(bins.size()) - 1;
         }
         bins[binidx]++;
     }
@@ -1166,10 +1164,10 @@ void gen::MapGenerator::_getRiverVertices(VertexList &vertices) {
 
         if (pathVertices.empty()) { continue; }
 
-        for (unsigned int i = 0; i < pathVertices.size(); i++) {
-            int idx = _vertexMap.getVertexIndex(pathVertices[i]);
+        for (unsigned int j = 0; j < pathVertices.size(); j++) {
+            int idx = _vertexMap.getVertexIndex(pathVertices[j]);
             if (!isVertexAdded[idx]) {
-                vertices.push_back(pathVertices[i]);
+                vertices.push_back(pathVertices[j]);
                 isVertexAdded[idx] = true;
             }
         }
@@ -1922,16 +1920,16 @@ void gen::MapGenerator::_getBorderPath(int vidx,
             break;
         }
 
-        int vidx = _vertexMap.getVertexIndex(v);
-        if (isEndVertex[vidx]) {
+        int currentVidx = _vertexMap.getVertexIndex(v);
+        if (isEndVertex[currentVidx]) {
             path.push_back(v);
-            isVertexProcessed[vidx] = true;
+            isVertexProcessed[currentVidx] = true;
             break;
         }
     }
 }
 
-void gen::MapGenerator::_getLabelDrawData(std::vector<jsoncons::json> &data) {
+void gen::MapGenerator::_getLabelDrawData(std::vector<nlohmann::json> &data) {
     std::vector<Label> labels;
     _initializeLabels(labels);
     if (labels.size() == 0) {
@@ -1940,7 +1938,7 @@ void gen::MapGenerator::_getLabelDrawData(std::vector<jsoncons::json> &data) {
 
     _generateLabelPlacements(labels);
 
-    std::vector<jsoncons::json> jsondata;
+    std::vector<nlohmann::json> jsondata;
     for (unsigned int i = 0; i < labels.size(); i++) {
         LabelCandidate label = labels[i].candidates[labels[i].candidateIdx];
         label.baseScore = labels[i].score;
@@ -2120,7 +2118,7 @@ void gen::MapGenerator::_getAreaLabelSamples(City &city,
         maxCount = (int)fmax(territoryCounts[i], maxCount);
     }
 
-    int numFaces = territoryFaces.size();
+    int numFaces = static_cast<int>(territoryFaces.size());
     int numSamples = (int)(((double)numFaces / (double)maxCount)*_numAreaLabelSamples);
     numSamples = (int)fmin(numSamples, territoryFaces.size());
     for (int i = 0; i < numSamples; i++) {
@@ -2130,7 +2128,7 @@ void gen::MapGenerator::_getAreaLabelSamples(City &city,
 
 void gen::MapGenerator::_shuffleVector(std::vector<int> &vector) {
     int temp;
-    for (int i = vector.size() - 2; i >= 0; i--) {
+    for (int i = static_cast<int>(vector.size()) - 2; i >= 0; i--) {
         int j = (rand() % (int)(i - 0 + 1));
         temp = vector[i];
         vector[i] = vector[j];
@@ -2183,14 +2181,14 @@ std::vector<Extents2d> gen::MapGenerator::_getCharacterExtents(std::string text,
     return charextents;
 }
 
-jsoncons::json gen::MapGenerator::_getLabelJSON(LabelCandidate &label) {
+nlohmann::json gen::MapGenerator::_getLabelJSON(LabelCandidate &label) {
     dcel::Point npos = _normalizeMapCoordinate(label.position);
     dcel::Point nmin = _normalizeMapCoordinate(label.extents.minx, 
                                                label.extents.miny);
     dcel::Point nmax = _normalizeMapCoordinate(label.extents.maxx, 
                                                label.extents.maxy);
 
-    jsoncons::json json;
+    nlohmann::json json;
     json["text"] = label.text;
     json["fontface"] = label.fontface;
     json["fontsize"] = label.fontsize;
@@ -2232,7 +2230,7 @@ gen::MapGenerator::_getLabelOffsets(Label label, double markerRadius) {
     double textwidth = extents.maxx - extents.minx;
     double textheight = extents.maxy - extents.miny;
     double textheightstart = charextents[0].maxy - charextents[0].miny;
-    int endidx = charextents.size() - 1;
+    int endidx = static_cast<int>(charextents.size()) - 1;
     double textheightend = charextents[endidx].maxy - charextents[endidx].miny;
     double starty = charextents[0].miny - extents.miny;
     double endy = charextents[endidx].miny - extents.miny;
@@ -2594,10 +2592,10 @@ void gen::MapGenerator::_initializeAreaLabelOrientationScore(Label &label) {
     }
     double territoryRadius = sqrt(maxdistsq);
 
-    double dx = _spatialGridResolutionFactor*_resolution;
-    SpatialPointGrid territoryGrid(territoryPoints, dx);
-    SpatialPointGrid enemyGrid(enemyPoints, dx);
-    SpatialPointGrid waterGrid(waterPoints, dx);
+    double gridDx = _spatialGridResolutionFactor*_resolution;
+    SpatialPointGrid territoryGrid(territoryPoints, gridDx);
+    SpatialPointGrid enemyGrid(enemyPoints, gridDx);
+    SpatialPointGrid waterGrid(waterPoints, gridDx);
 
     for (unsigned int i = 0; i < label.candidates.size(); i++) {
         double score = _calculationAreaLabelOrientationScore(
@@ -2656,7 +2654,7 @@ void gen::MapGenerator::_generateLabelPlacements(std::vector<Label> &labels) {
     _initializeLabelCollisionData(labels);
     double score = _calculateLabelPlacementScore(labels);
 
-    int numLabels = labels.size();
+    int numLabels = static_cast<int>(labels.size());
     double temperature = _initialTemperature;
     int numTemperatureChanges = 0;
     int numRepositionings = 0;
@@ -2664,8 +2662,8 @@ void gen::MapGenerator::_generateLabelPlacements(std::vector<Label> &labels) {
     int maxSuccessfulRepositionings = _successfulRepositioningFactor * numLabels;
     int maxTotalRepositionings = _totalRepositioningFactor * numLabels;
     while (numTemperatureChanges < _maxTemperatureChanges) {
-        int randlidx = _randomRangeInt(0, labels.size());
-        int randcidx = _randomRangeInt(0, labels[randlidx].candidates.size());
+        int randlidx = _randomRangeInt(0, static_cast<int>(labels.size()));
+        int randcidx = _randomRangeInt(0, static_cast<int>(labels[randlidx].candidates.size()));
         int lastcidx = labels[randlidx].candidateIdx;
         labels[randlidx].candidateIdx = randcidx;
 
@@ -2700,7 +2698,7 @@ void gen::MapGenerator::_generateLabelPlacements(std::vector<Label> &labels) {
 
 void gen::MapGenerator::_randomizeLabelPlacements(std::vector<Label> &labels) {
     for (unsigned int i = 0; i < labels.size(); i++) {
-        labels[i].candidateIdx = _randomRangeInt(0, labels[i].candidates.size());
+        labels[i].candidateIdx = _randomRangeInt(0, static_cast<int>(labels[i].candidates.size()));
     }
 }
 
