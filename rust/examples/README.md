@@ -31,5 +31,5 @@ pnpm preview
 - Mantine 主题 + CSS Variables + Tailwind 协同样式
 - 深色 / 浅色模式切换并持久化
 - 中英文界面切换并持久化
-- WebGPU / WebGL / Canvas / SVG 多后端渲染
+- Three.js 统一驱动的 WebGPU / SVG 双后端渲染
 - JSON / PNG / SVG 导入导出

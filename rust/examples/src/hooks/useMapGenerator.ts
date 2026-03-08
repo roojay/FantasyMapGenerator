@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { MapScenePacket } from "@/types/map";
+
 interface GenerateOptions {
   seed: number;
   width: number;
@@ -8,11 +10,10 @@ interface GenerateOptions {
   drawScale: number;
   cities: number;
   towns: number;
-  includeRasterData: boolean;
 }
 
 interface GenerateResult {
-  json: string;
+  packet: MapScenePacket;
   seed: number;
 }
 
@@ -21,11 +22,9 @@ export function useMapGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    // 创建 worker
-    workerRef.current = new Worker(
-      new URL("../workers/mapGenerator.worker.ts", import.meta.url),
-      { type: "module" }
-    );
+    workerRef.current = new Worker(new URL("../workers/mapGenerator.worker.ts", import.meta.url), {
+      type: "module"
+    });
 
     return () => {
       workerRef.current?.terminate();
@@ -33,38 +32,40 @@ export function useMapGenerator() {
     };
   }, []);
 
-  const generate = useCallback(
-    (options: GenerateOptions): Promise<GenerateResult> => {
-      return new Promise((resolve, reject) => {
-        if (!workerRef.current) {
-          reject(new Error("Worker not initialized"));
+  const generate = useCallback((options: GenerateOptions): Promise<GenerateResult> => {
+    return new Promise((resolve, reject) => {
+      if (!workerRef.current) {
+        reject(new Error("Worker not initialized"));
+        return;
+      }
+
+      setIsGenerating(true);
+
+      const handleMessage = (event: MessageEvent<{
+        type: "success" | "error";
+        packet?: MapScenePacket;
+        seed?: number;
+        error?: string;
+      }>) => {
+        const { type, packet, seed, error } = event.data;
+        workerRef.current?.removeEventListener("message", handleMessage);
+        setIsGenerating(false);
+
+        if (type === "success" && packet && seed !== undefined) {
+          resolve({ packet, seed });
           return;
         }
 
-        setIsGenerating(true);
+        reject(new Error(error || "Unknown error"));
+      };
 
-        const handleMessage = (e: MessageEvent) => {
-          const { type, json, seed, error } = e.data;
-
-          workerRef.current?.removeEventListener("message", handleMessage);
-          setIsGenerating(false);
-
-          if (type === "success" && json && seed !== undefined) {
-            resolve({ json, seed });
-          } else {
-            reject(new Error(error || "Unknown error"));
-          }
-        };
-
-        workerRef.current.addEventListener("message", handleMessage);
-        workerRef.current.postMessage({
-          type: "generate",
-          ...options
-        });
+      workerRef.current.addEventListener("message", handleMessage);
+      workerRef.current.postMessage({
+        type: "generate",
+        ...options
       });
-    },
-    []
-  );
+    });
+  }, []);
 
   return { generate, isGenerating };
 }

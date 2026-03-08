@@ -60,7 +60,7 @@
     unused_variables
 )]
 
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
@@ -102,6 +102,46 @@ impl Default for MapExportOptions {
             include_raster_data: true,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MapLabelDrawData {
+    pub charextents: Vec<f64>,
+    pub extents: [f64; 4],
+    pub fontface: String,
+    pub fontsize: i32,
+    pub position: [f64; 2],
+    pub score: f64,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MapRasterDrawData<T> {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<T>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MapDrawData {
+    pub image_width: u32,
+    pub image_height: u32,
+    pub draw_scale: f64,
+    pub contour: Vec<Vec<f64>>,
+    pub river: Vec<Vec<f64>>,
+    pub slope: Vec<f64>,
+    pub city: Vec<f64>,
+    pub town: Vec<f64>,
+    pub territory: Vec<Vec<f64>>,
+    pub label: Vec<MapLabelDrawData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heightmap: Option<MapRasterDrawData<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flux_map: Option<MapRasterDrawData<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub land_mask: Option<MapRasterDrawData<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub land_polygons: Option<Vec<Vec<f64>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2138,7 +2178,7 @@ impl MapGenerator {
     }
 
     // ----- labels -----
-    fn get_label_draw_data(&mut self) -> Vec<Value> {
+    fn get_label_draw_data(&mut self) -> Vec<MapLabelDrawData> {
         let mut labels = self.initialize_labels();
         if labels.is_empty() {
             return Vec::new();
@@ -2149,7 +2189,7 @@ impl MapGenerator {
             .iter()
             .map(|label| {
                 let c = &label.candidates[label.candidate_idx];
-                self.label_to_json(c, label.score)
+                self.label_to_draw_data(c, label.score)
             })
             .collect()
     }
@@ -2494,7 +2534,7 @@ impl MapGenerator {
         )
     }
 
-    fn label_to_json(&self, c: &LabelCandidate, score: f64) -> Value {
+    fn label_to_draw_data(&self, c: &LabelCandidate, score: f64) -> MapLabelDrawData {
         let npos = self.normalize_map_coordinate(c.position);
         let nmin = self.normalize_map_coordinate(Point::new(c.extents.minx, c.extents.miny));
         let nmax = self.normalize_map_coordinate(Point::new(c.extents.maxx, c.extents.maxy));
@@ -2507,15 +2547,15 @@ impl MapGenerator {
             char_extents_flat.push(cn_max.x);
             char_extents_flat.push(cn_max.y);
         }
-        json!({
-            "text": c.text,
-            "fontface": c.fontface,
-            "fontsize": c.fontsize,
-            "position": [npos.x, npos.y],
-            "extents": [nmin.x, nmin.y, nmax.x, nmax.y],
-            "charextents": char_extents_flat,
-            "score": score,
-        })
+        MapLabelDrawData {
+            text: c.text.clone(),
+            fontface: c.fontface.clone(),
+            fontsize: c.fontsize,
+            position: [npos.x, npos.y],
+            extents: [nmin.x, nmin.y, nmax.x, nmax.y],
+            charextents: char_extents_flat,
+            score,
+        }
     }
 
     fn initialize_marker_label_scores(&mut self, labels: &mut Vec<Label>) {
@@ -3253,12 +3293,11 @@ impl MapGenerator {
 
         for y in 0..grid_height {
             for x in 0..grid_width {
-                let px = self.extents.minx
-                    + (x as f64 / grid_width as f64) * (self.extents.maxx - self.extents.minx);
-                let py = self.extents.miny
-                    + (y as f64 / grid_height as f64) * (self.extents.maxy - self.extents.miny);
+                // 与高度图导出保持一致：按像素中心采样，避免海岸线相对地形偏半格。
+                let px = self.sample_grid_world_x(x, grid_width);
+                let py = self.sample_grid_world_y(y, grid_height);
 
-                let nearest_face_idx = self.find_nearest_face_index(px, py, &spatial_grid);
+                let nearest_face_idx = self.find_face_index_for_point(px, py, &spatial_grid);
                 let is_land = match nearest_face_idx {
                     Some(fidx) if fidx < self.is_land_face_table.len() => {
                         self.is_land_face_table[fidx]
@@ -3296,16 +3335,21 @@ impl MapGenerator {
                 continue;
             }
 
-            let mut polygon = Vec::with_capacity(verts.len() * 2);
+            let mut world_polygon = Vec::with_capacity(verts.len());
             for &vidx in verts {
                 let Some(vertex) = self.voronoi.vertices.get(vidx) else {
                     continue;
                 };
-                polygon.push((vertex.position.x - self.extents.minx) * inv_w);
-                polygon.push((vertex.position.y - self.extents.miny) * inv_h);
+                world_polygon.push(vertex.position);
             }
 
-            if polygon.len() >= 6 {
+            let clipped_polygon = clip_polygon_to_extents(&world_polygon, self.extents);
+            if clipped_polygon.len() >= 3 {
+                let mut polygon = Vec::with_capacity(clipped_polygon.len() * 2);
+                for vertex in clipped_polygon {
+                    polygon.push((vertex.x - self.extents.minx) * inv_w);
+                    polygon.push((vertex.y - self.extents.miny) * inv_h);
+                }
                 polygons.push(polygon);
             }
         }
@@ -3342,7 +3386,7 @@ impl MapGenerator {
             && miny <= self.extents.maxy
     }
 
-    fn find_nearest_face_index(
+    fn find_face_index_for_point(
         &self,
         x: f64,
         y: f64,
@@ -3361,17 +3405,76 @@ impl MapGenerator {
             radius *= 2.0;
         }
 
-        candidates.into_iter().min_by(|&a, &b| {
-            let pa = self.face_positions[a];
-            let pb = self.face_positions[b];
-            let da = (pa.x - x) * (pa.x - x) + (pa.y - y) * (pa.y - y);
-            let db = (pb.x - x) * (pb.x - x) + (pb.y - y) * (pb.y - y);
-            da.partial_cmp(&db).unwrap_or(Ordering::Equal)
-        })
+        candidates.sort_by(|&a, &b| {
+            self.face_distance_sq(a, x, y)
+                .partial_cmp(&self.face_distance_sq(b, x, y))
+                .unwrap_or(Ordering::Equal)
+        });
+
+        for &candidate in &candidates {
+            if self.face_contains_point(candidate, x, y) {
+                return Some(candidate);
+            }
+        }
+
+        candidates.into_iter().next()
+    }
+
+    fn face_distance_sq(&self, face_idx: usize, x: f64, y: f64) -> f64 {
+        let face_position = self.face_positions[face_idx];
+        let dx = face_position.x - x;
+        let dy = face_position.y - y;
+        dx * dx + dy * dy
+    }
+
+    fn face_contains_point(&self, face_idx: usize, x: f64, y: f64) -> bool {
+        let Some(vertices) = self.face_vertices.get(face_idx) else {
+            return false;
+        };
+        if vertices.len() < 3 {
+            return false;
+        }
+
+        let point = Point::new(x, y);
+        let mut inside = false;
+        let mut previous = match vertices
+            .last()
+            .and_then(|vertex_idx| self.voronoi.vertices.get(*vertex_idx))
+        {
+            Some(vertex) => vertex.position,
+            None => return false,
+        };
+
+        for &vertex_idx in vertices {
+            let Some(vertex) = self.voronoi.vertices.get(vertex_idx) else {
+                continue;
+            };
+            let current = vertex.position;
+
+            if point_on_segment(point, previous, current) {
+                return true;
+            }
+
+            let intersects = ((current.y > y) != (previous.y > y))
+                && (x
+                    <= (previous.x - current.x) * (y - current.y) / (previous.y - current.y)
+                        + current.x);
+            if intersects {
+                inside = !inside;
+            }
+
+            previous = current;
+        }
+
+        inside
     }
 
     pub fn get_draw_data(&mut self) -> String {
         self.get_draw_data_with_options(MapExportOptions::default())
+    }
+
+    pub fn collect_draw_data(&mut self) -> MapDrawData {
+        self.collect_draw_data_with_options(MapExportOptions::default())
     }
 
     /// 获取地图绘图数据，并根据导出选项决定是否附带栅格数据。
@@ -3390,7 +3493,7 @@ impl MapGenerator {
     ///
     /// # 参考来源
     /// - 原始 C++ 实现: src/mapgenerator.cpp, getDrawData()
-    pub fn get_draw_data_with_options(&mut self, options: MapExportOptions) -> String {
+    pub fn collect_draw_data_with_options(&mut self, options: MapExportOptions) -> MapDrawData {
         // PERF: 栅格数据是本 fork 新增的能力，不属于原始 C++ 导出契约。
         // Web 普通渲染路径只消费矢量数据，因此这里允许按需跳过大数组导出。
         self.ensure_eroded();
@@ -3457,24 +3560,28 @@ impl MapGenerator {
             }
         };
 
-        let label: Vec<Value> = if self.labels_enabled {
+        let label = if self.labels_enabled {
             self.get_label_draw_data()
         } else {
             Vec::new()
         };
 
-        let mut output = json!({
-            "image_width": self.img_width,
-            "image_height": self.img_height,
-            "draw_scale": self.draw_scale,
-            "contour": contour,
-            "river": river,
-            "slope": slope,
-            "city": city,
-            "town": town,
-            "territory": territory,
-            "label": label,
-        });
+        let mut output = MapDrawData {
+            image_width: self.img_width,
+            image_height: self.img_height,
+            draw_scale: self.draw_scale,
+            contour,
+            river,
+            slope,
+            city,
+            town,
+            territory,
+            label,
+            heightmap: None,
+            flux_map: None,
+            land_mask: None,
+            land_polygons: None,
+        };
 
         if options.include_raster_data {
             // 导出栅格数据（降采样以减小文件大小）
@@ -3485,25 +3592,29 @@ impl MapGenerator {
             let land_mask = self.export_land_mask(raster_width, raster_height);
             let land_polygons = self.export_land_polygons();
 
-            output["heightmap"] = json!({
-                "width": raster_width,
-                "height": raster_height,
-                "data": heightmap,
+            output.heightmap = Some(MapRasterDrawData {
+                width: raster_width,
+                height: raster_height,
+                data: heightmap,
             });
-            output["flux_map"] = json!({
-                "width": raster_width,
-                "height": raster_height,
-                "data": flux_map,
+            output.flux_map = Some(MapRasterDrawData {
+                width: raster_width,
+                height: raster_height,
+                data: flux_map,
             });
-            output["land_mask"] = json!({
-                "width": raster_width,
-                "height": raster_height,
-                "data": land_mask,
+            output.land_mask = Some(MapRasterDrawData {
+                width: raster_width,
+                height: raster_height,
+                data: land_mask,
             });
-            output["land_polygons"] = json!(land_polygons);
+            output.land_polygons = Some(land_polygons);
         }
 
-        serde_json::to_string(&output).unwrap()
+        output
+    }
+
+    pub fn get_draw_data_with_options(&mut self, options: MapExportOptions) -> String {
+        serde_json::to_string(&self.collect_draw_data_with_options(options)).unwrap()
     }
 }
 
@@ -3515,6 +3626,119 @@ fn point_distance(a: Point, b: Point) -> f64 {
 
 fn extents_overlap(a: Extents2d, b: Extents2d) -> bool {
     a.minx < b.maxx && a.maxx > b.minx && a.miny < b.maxy && a.maxy > b.miny
+}
+
+fn point_on_segment(point: Point, start: Point, end: Point) -> bool {
+    let cross = (point.y - start.y) * (end.x - start.x) - (point.x - start.x) * (end.y - start.y);
+    if cross.abs() > 1e-9 {
+        return false;
+    }
+
+    let dot = (point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y);
+    if dot < 0.0 {
+        return false;
+    }
+
+    let squared_length =
+        (end.x - start.x) * (end.x - start.x) + (end.y - start.y) * (end.y - start.y);
+    dot <= squared_length
+}
+
+fn clip_polygon_to_extents(points: &[Point], extents: Extents2d) -> Vec<Point> {
+    let mut output = points.to_vec();
+    output = clip_polygon_against_vertical(&output, extents.minx, true);
+    output = clip_polygon_against_vertical(&output, extents.maxx, false);
+    output = clip_polygon_against_horizontal(&output, extents.miny, true);
+    output = clip_polygon_against_horizontal(&output, extents.maxy, false);
+    output
+}
+
+fn clip_polygon_against_vertical(points: &[Point], bound: f64, keep_greater: bool) -> Vec<Point> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut output = Vec::new();
+    let mut previous = *points.last().unwrap();
+    let mut previous_inside = if keep_greater {
+        previous.x >= bound
+    } else {
+        previous.x <= bound
+    };
+
+    for &current in points {
+        let current_inside = if keep_greater {
+            current.x >= bound
+        } else {
+            current.x <= bound
+        };
+
+        if current_inside != previous_inside {
+            output.push(intersect_with_vertical(previous, current, bound));
+        }
+        if current_inside {
+            output.push(current);
+        }
+
+        previous = current;
+        previous_inside = current_inside;
+    }
+
+    output
+}
+
+fn clip_polygon_against_horizontal(points: &[Point], bound: f64, keep_greater: bool) -> Vec<Point> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut output = Vec::new();
+    let mut previous = *points.last().unwrap();
+    let mut previous_inside = if keep_greater {
+        previous.y >= bound
+    } else {
+        previous.y <= bound
+    };
+
+    for &current in points {
+        let current_inside = if keep_greater {
+            current.y >= bound
+        } else {
+            current.y <= bound
+        };
+
+        if current_inside != previous_inside {
+            output.push(intersect_with_horizontal(previous, current, bound));
+        }
+        if current_inside {
+            output.push(current);
+        }
+
+        previous = current;
+        previous_inside = current_inside;
+    }
+
+    output
+}
+
+fn intersect_with_vertical(start: Point, end: Point, bound: f64) -> Point {
+    let dx = end.x - start.x;
+    if dx.abs() <= 1e-12 {
+        return Point::new(bound, start.y);
+    }
+
+    let t = (bound - start.x) / dx;
+    Point::new(bound, start.y + (end.y - start.y) * t)
+}
+
+fn intersect_with_horizontal(start: Point, end: Point, bound: f64) -> Point {
+    let dy = end.y - start.y;
+    if dy.abs() <= 1e-12 {
+        return Point::new(start.x, bound);
+    }
+
+    let t = (bound - start.y) / dy;
+    Point::new(start.x + (end.x - start.x) * t, bound)
 }
 
 /// Smooths a sequence of (x, y) positions using a Laplacian filter:

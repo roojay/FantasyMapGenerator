@@ -2,10 +2,10 @@ import { Box, Text } from "@mantine/core";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import type { MapData } from "@/types/map";
+import type { MapScenePacket } from "@/types/map";
 
 interface MapStatsProps {
-  mapData: MapData | null;
+  mapData: MapScenePacket | null;
 }
 
 export function MapStats({ mapData }: MapStatsProps) {
@@ -13,10 +13,10 @@ export function MapStats({ mapData }: MapStatsProps) {
 
   if (!mapData) return null;
 
-  const cityCount = mapData.city.length / 2;
-  const townCount = mapData.town.length / 2;
-  const riverCount = mapData.river.length;
-  const territoryCount = mapData.territory.length;
+  const cityCount = mapData.metadata.cityCount;
+  const townCount = mapData.metadata.townCount;
+  const riverCount = mapData.metadata.riverCount;
+  const territoryCount = mapData.metadata.territoryCount;
 
   const stats = [
     { label: t("stats.cities"), value: cityCount },

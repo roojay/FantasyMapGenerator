@@ -14,6 +14,7 @@ import { TopToolbar } from "@/components/TopToolbar";
 import { cn } from "@/lib/cn";
 import { downloadBlob, downloadDataUrl } from "@/lib/download";
 import "@/lib/i18n";
+import { parseLegacyMapJson } from "@/lib/mapScenePacket";
 import {
   APP_LANGUAGE_STORAGE_KEY,
   deserializeAppLanguage,
@@ -25,9 +26,10 @@ import { colorSchemeManager, cssVariablesResolver, theme } from "@/theme";
 import type {
   AppLanguage,
   MapConfig,
-  MapData,
   MapLayers,
+  MapScenePacket,
   RenderBackend,
+  RendererRuntimeBackend,
   StatusMessage
 } from "@/types/map";
 
@@ -39,7 +41,7 @@ const defaultConfig: MapConfig = {
   cities: 5,
   towns: 10,
   drawScale: 1,
-  renderer: "svg"
+  renderer: "auto"
 };
 
 const defaultLayers: MapLayers = {
@@ -71,12 +73,13 @@ function AppContent() {
 
   const [config, setConfig] = useState(defaultConfig);
   const [layers, setLayers] = useState(defaultLayers);
-  const [satelliteStyle, setSatelliteStyle] = useState(false);
-  const [mapData, setMapData] = useState<MapData | null>(null);
+  const [mapData, setMapData] = useState<MapScenePacket | null>(null);
   const [mapJson, setMapJson] = useState<string | null>(null);
   const [availableModes, setAvailableModes] = useState<RenderBackend[]>(["svg"]);
   const [renderMode, setRenderMode] = useState<RenderBackend | null>(null);
+  const [actualBackend, setActualBackend] = useState<RendererRuntimeBackend>("unknown");
   const [loading, setLoading] = useState(false);
+  const [rendererSwitching, setRendererSwitching] = useState(false);
   const [status, setStatus] = useState<StatusMessage>({ tone: "neutral", text: t("status.booting") });
   const [error, setError] = useState<string | null>(null);
 
@@ -101,16 +104,14 @@ function AppContent() {
     setLayers((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const hydrateMap = useCallback((json: string) => {
-    const parsed = JSON.parse(json) as MapData;
+  const hydrateMap = useCallback((packet: MapScenePacket) => {
     startTransition(() => {
-      setMapJson(json);
-      setMapData(parsed);
+      setMapJson(packet.legacyJson ?? null);
+      setMapData(packet);
     });
   }, []);
 
-  const generateMapData = useCallback(async (includeRasterData: boolean) => {
-    // only request raster data when satellite style is active.
+  const generateMapData = useCallback(async () => {
     setLoading(true);
     setError(null);
     setStatus({ tone: "neutral", text: t("status.generating") });
@@ -123,12 +124,11 @@ function AppContent() {
         resolution: config.resolution,
         drawScale: config.drawScale,
         cities: config.cities,
-        towns: config.towns,
-        includeRasterData
+        towns: config.towns
       });
 
       setConfig((current) => ({ ...current, seed: result.seed }));
-      hydrateMap(result.json);
+      hydrateMap(result.packet);
       setStatus({ tone: "neutral", text: t("status.rendering") });
     } catch (cause) {
       setError(t("errors.generator", { message: cause instanceof Error ? cause.message : String(cause) }));
@@ -139,19 +139,8 @@ function AppContent() {
   }, [config, generateMap, hydrateMap, t]);
 
   const handleGenerate = useCallback(async () => {
-    await generateMapData(satelliteStyle);
-  }, [generateMapData, satelliteStyle]);
-
-  const updateSatelliteStyle = useCallback((enabled: boolean) => {
-    setSatelliteStyle(enabled);
-    rendererRef.current?.setSatelliteStyle(enabled);
-
-    // If the current map was generated in vector-only mode, lazily regenerate once
-    // when satellite rendering is enabled so normal map generation stays lean.
-    if (enabled && mapData && (!mapData.heightmap || !mapData.land_mask)) {
-      void generateMapData(true);
-    }
-  }, [generateMapData, mapData]);
+    await generateMapData();
+  }, [generateMapData]);
 
   const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -163,7 +152,7 @@ function AppContent() {
 
     try {
       const json = await file.text();
-      hydrateMap(json);
+      hydrateMap(parseLegacyMapJson(json));
       setStatus({ tone: "neutral", text: t("status.rendering") });
     } catch (cause) {
       setError(t("errors.import", { message: cause instanceof Error ? cause.message : String(cause) }));
@@ -250,15 +239,25 @@ function AppContent() {
           mapData={mapData}
           layers={layers}
           preferredMode={config.renderer}
-          onRendererStateChange={({ mode, availableModes: modes }) => {
+          onRendererSwitchStateChange={(switching) => {
+            setRendererSwitching(switching);
+            if (switching) {
+              setError(null);
+              setStatus({ tone: "info", text: t("status.switching") });
+            }
+          }}
+          onRendererStateChange={({ mode, actualBackend: backend, availableModes: modes }) => {
             setRenderMode(mode);
+            setActualBackend(backend);
             setAvailableModes(modes);
           }}
           onRenderComplete={(mode) => {
+            setRendererSwitching(false);
             setRenderMode(mode);
             setStatus({ tone: "success", text: t("status.rendered") });
           }}
           onRenderError={(message) => {
+            setRendererSwitching(false);
             setError(t("errors.render", { message }));
             setStatus({ tone: "error", text: t("status.ready") });
           }}
@@ -292,17 +291,16 @@ function AppContent() {
           status={status}
           error={error}
           renderMode={renderMode}
+          actualBackend={actualBackend}
           availableModes={availableModes}
-          loading={loading}
+          loading={loading || rendererSwitching}
           onRendererChange={(mode) => updateConfig("renderer", mode)}
         />
 
         {/* Layer control */}
-        <LayerControl 
-          layers={layers} 
-          satelliteStyle={satelliteStyle}
+        <LayerControl
+          layers={layers}
           onLayerChange={updateLayer}
-          onSatelliteStyleChange={updateSatelliteStyle}
         />
 
         {/* Top toolbar */}

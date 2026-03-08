@@ -39,28 +39,27 @@ body {
   box-sizing: border-box;
 }
 
-/* Map canvas styles */
-.map-stage > canvas,
-.map-stage > svg {
-  display: block;
+/* Map stage styles */
+.map-stage {
+  position: relative;
+  isolation: isolate;
 }
 
-.map-viewport {
-  touch-action: none;
-  overscroll-behavior: contain;
+.map-stage > canvas,
+.map-stage > svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
   user-select: none;
+  touch-action: none;
   cursor: grab;
 }
 
-.is-panning .map-viewport {
+.map-stage > canvas:active,
+.map-stage > svg:active {
   cursor: grabbing;
-}
-
-.map-pan-layer {
-  will-change: transform;
-  backface-visibility: hidden;
-  transform-origin: 0 0;
-  contain: layout paint style;
 }
 
 ::selection {
@@ -138,4 +137,76 @@ button,
 
 .loading-spinner {
   animation: spin 1s linear infinite;
+}
+
+@keyframes rendererSwitchPulse {
+  0%, 100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+
+@keyframes rendererSwitchBeam {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.28;
+  }
+  80% {
+    opacity: 0.18;
+  }
+  100% {
+    transform: translate3d(420%, 0, 0);
+    opacity: 0;
+  }
+}
+
+@keyframes rendererSwitchCard {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.renderer-switch-overlay {
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.14), transparent 58%),
+    linear-gradient(180deg, rgba(247, 241, 227, 0.18), rgba(15, 23, 42, 0.12));
+  backdrop-filter: blur(12px) saturate(1.05);
+  animation: rendererSwitchPulse 1.9s ease-in-out infinite;
+}
+
+.renderer-switch-beam {
+  background: linear-gradient(90deg, transparent, rgba(255, 248, 220, 0.45), transparent);
+  filter: blur(18px);
+  animation: rendererSwitchBeam 1.35s ease-in-out infinite;
+}
+
+.renderer-switch-card {
+  border: 1px solid rgba(var(--app-border), 0.7);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.56));
+  box-shadow:
+    0 18px 40px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(18px);
+  animation: rendererSwitchCard 1.9s ease-in-out infinite;
+}
+
+[data-mantine-color-scheme="dark"] .renderer-switch-card {
+  background:
+    linear-gradient(135deg, rgba(18, 24, 38, 0.82), rgba(18, 24, 38, 0.62));
+  box-shadow:
+    0 18px 40px rgba(2, 6, 23, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.renderer-switch-kicker {
+  color: rgb(var(--app-muted));
 }

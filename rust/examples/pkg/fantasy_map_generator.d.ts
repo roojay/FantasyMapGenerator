@@ -13,6 +13,7 @@ export class WasmMapGenerator {
      * 返回包含地图数据的 JSON 字符串
      */
     generate(num_cities: number, num_towns: number): string;
+    generate_render_packet(num_cities: number, num_towns: number): WasmRenderPacket;
     /**
      * 仅生成地形（不包括城市和边界）
      */
@@ -55,6 +56,48 @@ export class WasmMapGenerator {
     set_draw_scale(scale: number): void;
 }
 
+export class WasmRenderPacket {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    albedo_texture(): Uint8Array;
+    ao_texture(): Uint8Array;
+    border_offsets(): Uint32Array;
+    border_positions(): Float32Array;
+    city_positions(): Float32Array;
+    coast_glow_texture(): Uint8Array;
+    contour_offsets(): Uint32Array;
+    contour_positions(): Float32Array;
+    flux_texture(): Uint8Array;
+    height_texture(): Uint8Array;
+    label_anchors(): Float32Array;
+    label_bytes(): Uint8Array;
+    label_offsets(): Uint32Array;
+    label_sizes(): Float32Array;
+    land_mask_texture(): Uint8Array;
+    land_polygon_offsets(): Uint32Array;
+    land_polygon_positions(): Float32Array;
+    river_offsets(): Uint32Array;
+    river_positions(): Float32Array;
+    roughness_texture(): Uint8Array;
+    slope_segments(): Float32Array;
+    terrain_albedo_texture(): Uint8Array;
+    terrain_indices(): Uint32Array;
+    terrain_normals(): Float32Array;
+    terrain_positions(): Float32Array;
+    terrain_uvs(): Float32Array;
+    town_positions(): Float32Array;
+    water_alpha_texture(): Uint8Array;
+    water_color_texture(): Uint8Array;
+    readonly legacy_json: string;
+    readonly metadata_json: string;
+}
+
+/**
+ * 根据导出的地图 JSON 和图层配置在 Rust 侧生成标准原始地图 SVG。
+ */
+export function build_map_svg(map_json: string, layers_json: string): string;
+
 /**
  * 根据导出的地图 JSON 和图层配置直接在 Rust 侧生成卫星风格 SVG。
  */
@@ -79,15 +122,49 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_wasmrenderpacket_free: (a: number, b: number) => void;
+    readonly wasmrenderpacket_metadata_json: (a: number) => [number, number];
+    readonly wasmrenderpacket_legacy_json: (a: number) => [number, number];
+    readonly wasmrenderpacket_terrain_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_terrain_normals: (a: number) => [number, number];
+    readonly wasmrenderpacket_terrain_uvs: (a: number) => [number, number];
+    readonly wasmrenderpacket_terrain_indices: (a: number) => [number, number];
+    readonly wasmrenderpacket_height_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_land_mask_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_flux_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_albedo_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_terrain_albedo_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_roughness_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_ao_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_water_color_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_water_alpha_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_coast_glow_texture: (a: number) => [number, number];
+    readonly wasmrenderpacket_slope_segments: (a: number) => [number, number];
+    readonly wasmrenderpacket_river_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_river_offsets: (a: number) => [number, number];
+    readonly wasmrenderpacket_contour_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_contour_offsets: (a: number) => [number, number];
+    readonly wasmrenderpacket_border_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_border_offsets: (a: number) => [number, number];
+    readonly wasmrenderpacket_city_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_town_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_label_bytes: (a: number) => [number, number];
+    readonly wasmrenderpacket_label_offsets: (a: number) => [number, number];
+    readonly wasmrenderpacket_label_anchors: (a: number) => [number, number];
+    readonly wasmrenderpacket_label_sizes: (a: number) => [number, number];
+    readonly wasmrenderpacket_land_polygon_positions: (a: number) => [number, number];
+    readonly wasmrenderpacket_land_polygon_offsets: (a: number) => [number, number];
     readonly __wbg_wasmmapgenerator_free: (a: number, b: number) => void;
     readonly wasmmapgenerator_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmmapgenerator_generate: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly wasmmapgenerator_generate_render_packet: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmapgenerator_generate_with_options: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly wasmmapgenerator_generate_terrain_only: (a: number) => [number, number, number, number];
     readonly wasmmapgenerator_get_seed: (a: number) => number;
     readonly wasmmapgenerator_set_draw_scale: (a: number, b: number) => void;
     readonly generate_map_simple: (a: number, b: number, c: number) => [number, number, number, number];
     readonly build_satellite_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly build_map_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_satellite_svg_with_options: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly init_panic_hook: () => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

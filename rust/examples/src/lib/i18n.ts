@@ -45,8 +45,6 @@ const resources = {
       renderers: {
         auto: "自动",
         webgpu: "WebGPU",
-        webgl: "WebGL",
-        canvas: "Canvas 2D",
         svg: "SVG"
       },
       layers: {
@@ -56,8 +54,7 @@ const resources = {
         border: "边境线",
         city: "城市",
         town: "城镇",
-        label: "标签",
-        satellite: "卫星风格"
+        label: "标签"
       },
       status: {
         booting: "正在初始化 WASM…",
@@ -82,7 +79,8 @@ const resources = {
         exportedJson: "JSON 导出成功",
         exportedPng: "PNG 导出成功",
         exportedSvg: "SVG 导出成功",
-        rendererReady: "当前渲染模式：{{mode}}"
+        rendererReady: "当前渲染模式：{{mode}}",
+        switchingHint: "保留当前画面，正在切换至 {{mode}}"
       },
       errors: {
         wasmInit: "WASM 初始化失败：{{message}}",
@@ -140,8 +138,6 @@ const resources = {
       renderers: {
         auto: "Auto",
         webgpu: "WebGPU",
-        webgl: "WebGL",
-        canvas: "Canvas 2D",
         svg: "SVG"
       },
       layers: {
@@ -151,8 +147,7 @@ const resources = {
         border: "Borders",
         city: "Cities",
         town: "Towns",
-        label: "Labels",
-        satellite: "Satellite"
+        label: "Labels"
       },
       status: {
         booting: "Initializing WASM…",
@@ -177,7 +172,8 @@ const resources = {
         exportedJson: "JSON exported",
         exportedPng: "PNG exported",
         exportedSvg: "SVG exported",
-        rendererReady: "Renderer mode: {{mode}}"
+        rendererReady: "Renderer mode: {{mode}}",
+        switchingHint: "Keeping the current frame visible while switching to {{mode}}"
       },
       errors: {
         wasmInit: "Failed to initialize WASM: {{message}}",

@@ -1,14 +1,15 @@
 import { Box, Menu, Text } from "@mantine/core";
-import { IconChevronDown } from "@tabler/icons-react";
+import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import type { RenderBackend, RendererPreference, StatusMessage } from "@/types/map";
+import type { RenderBackend, RendererPreference, RendererRuntimeBackend, StatusMessage } from "@/types/map";
 
 interface StatusBarProps {
   status: StatusMessage;
   error: string | null;
   renderMode: RenderBackend | null;
+  actualBackend: RendererRuntimeBackend;
   availableModes: RenderBackend[];
   loading: boolean;
   onRendererChange: (mode: RendererPreference) => void;
@@ -37,9 +38,23 @@ const statusColors = {
   }
 };
 
-export function StatusBar({ status, error, renderMode, availableModes, loading, onRendererChange }: StatusBarProps) {
+export function StatusBar({
+  status,
+  error,
+  renderMode,
+  actualBackend,
+  availableModes,
+  loading,
+  onRendererChange
+}: StatusBarProps) {
   const { t } = useTranslation();
   const colors = statusColors[status.tone];
+  const activeRendererOption: RenderBackend | null =
+    actualBackend === "svg"
+      ? "svg"
+      : actualBackend === "webgpu" || actualBackend === "webgl2"
+        ? "webgpu"
+        : renderMode;
 
   const glassStyle: React.CSSProperties = {
     backgroundColor: "var(--mantine-color-body)",
@@ -47,7 +62,7 @@ export function StatusBar({ status, error, renderMode, availableModes, loading, 
     backdropFilter: "blur(12px)"
   };
 
-  const rendererOptions = (["auto", "webgpu", "webgl", "canvas", "svg"] as RendererPreference[]).map((mode) => ({
+  const rendererOptions = (["auto", "webgpu", "svg"] as RendererPreference[]).map((mode) => ({
     value: mode,
     label: t(`renderers.${mode}`),
     disabled: mode !== "auto" && !availableModes.includes(mode as RenderBackend)
@@ -74,19 +89,10 @@ export function StatusBar({ status, error, renderMode, availableModes, loading, 
               boxShadow: `0 0 8px ${colors.bg}`
             }}
           />
-          
-          {/* Status text */}
-          <Text size="xs" className="whitespace-nowrap truncate max-w-[120px] sm:max-w-none">
-            {status.text}
-          </Text>
 
           {/* Renderer mode with dropdown */}
           {renderMode && (
             <>
-              <Box
-                className="h-3 w-px shrink-0"
-                style={{ backgroundColor: "rgba(var(--app-border), 0.6)" }}
-              />
               <Menu shadow="md" width={160}>
                 <Menu.Target>
                   <Box className="grid auto-cols-max grid-flow-col items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity">
@@ -103,6 +109,18 @@ export function StatusBar({ status, error, renderMode, availableModes, loading, 
                       key={option.value}
                       disabled={option.disabled}
                       className="cursor-pointer"
+                      leftSection={
+                        <Box className="grid h-3.5 w-3.5 place-items-center">
+                          {option.value === activeRendererOption ? <IconCheck size={12} stroke={2.5} /> : null}
+                        </Box>
+                      }
+                      rightSection={
+                        option.value === "webgpu" && actualBackend === "webgl2" ? (
+                          <Text size="10px" className="uppercase tracking-[0.16em] opacity-65">
+                            WebGL2
+                          </Text>
+                        ) : undefined
+                      }
                       onClick={() => onRendererChange(option.value)}
                     >
                       {option.label}
@@ -112,6 +130,16 @@ export function StatusBar({ status, error, renderMode, availableModes, loading, 
               </Menu>
             </>
           )}
+
+          <Box
+            className="h-3 w-px shrink-0"
+            style={{ backgroundColor: "rgba(var(--app-border), 0.6)" }}
+          />
+
+          {/* Status text */}
+          <Text size="xs" className="whitespace-nowrap truncate max-w-[120px] sm:max-w-none">
+            {status.text}
+          </Text>
         </Box>
       </Box>
 

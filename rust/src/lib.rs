@@ -128,6 +128,10 @@ pub mod wasm;
 #[cfg(feature = "wasm")]
 pub mod satellite_svg;
 
+/// 标准地图 SVG 生成模块（需要 wasm feature）
+#[cfg(feature = "wasm")]
+pub mod standard_svg;
+
 // ===================================
 // 便捷的重导出
 // ===================================
@@ -139,7 +143,9 @@ pub use config::Config;
 pub use data_structures::{Extents2d, Point};
 
 /// 地图生成器
-pub use map_generator::{MapExportOptions, MapGenerator};
+pub use map_generator::{
+    MapDrawData, MapExportOptions, MapGenerator, MapLabelDrawData, MapRasterDrawData,
+};
 
 /// 随机数生成器
 pub use utils::GlibcRand;
