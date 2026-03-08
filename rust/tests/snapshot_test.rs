@@ -13,13 +13,16 @@ fn test_output_is_valid_json() {
         .output()
         .expect("failed to run binary");
 
-    assert!(output.status.success(), "Binary failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "Binary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let json_str = std::fs::read_to_string(&out_json)
-        .expect("output file not found");
+    let json_str = std::fs::read_to_string(&out_json).expect("output file not found");
 
-    let parsed: serde_json::Value = serde_json::from_str(&json_str)
-        .expect("output is not valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json_str).expect("output is not valid JSON");
 
     assert!(parsed.get("image_width").is_some(), "missing image_width");
     assert!(parsed.get("image_height").is_some(), "missing image_height");

@@ -1,6 +1,7 @@
 # Fantasy Map Generator
 
-> **🔱 Fork Notice**: This is a fork with Rust implementation and modernized build system.
+> **🔱 Fork Notice**: This fork adds a Rust implementation, WASM/web UI, and recent performance work for browser map generation.
+> Recent changes include a faster terrain depression-fill pass, on-demand raster export for satellite mode, and reduced duplicate web renderer work.
 > 
 > **Original Repository**: [rlguy/FantasyMapGenerator](https://github.com/rlguy/FantasyMapGenerator)
 

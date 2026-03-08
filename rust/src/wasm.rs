@@ -2,8 +2,9 @@
 //!
 //! 提供 JavaScript 可调用的 WASM 接口，用于在浏览器中生成地图。
 
+use crate::satellite_svg;
+use crate::{Extents2d, GlibcRand, MapExportOptions, MapGenerator};
 use wasm_bindgen::prelude::*;
-use crate::{MapGenerator, Extents2d, GlibcRand};
 
 /// 设置 panic hook，在浏览器控制台显示 Rust panic 信息
 #[wasm_bindgen(start)]
@@ -49,7 +50,7 @@ impl WasmMapGenerator {
 
         // 创建随机数生成器
         let mut rng = GlibcRand::new(actual_seed);
-        
+
         // 预热随机数生成器（与 CLI 保持一致）
         for _ in 0..1000 {
             rng.rand();
@@ -58,7 +59,7 @@ impl WasmMapGenerator {
         // 创建地图生成器
         let generator = MapGenerator::new(extents, resolution, width, height, rng);
 
-        Ok(WasmMapGenerator { 
+        Ok(WasmMapGenerator {
             generator,
             seed: actual_seed,
         })
@@ -69,6 +70,32 @@ impl WasmMapGenerator {
     /// 返回包含地图数据的 JSON 字符串
     #[wasm_bindgen]
     pub fn generate(&mut self, num_cities: i32, num_towns: i32) -> Result<String, JsValue> {
+        self.generate_with_options(num_cities, num_towns, true)
+    }
+
+    /// 生成完整地图，并允许网页端按需决定是否导出附加栅格数据。
+    ///
+    /// # 参数
+    /// * `num_cities` - 城市数量
+    /// * `num_towns` - 城镇数量
+    /// * `include_raster_data` - 是否导出供卫星风格渲染使用的栅格数据
+    ///
+    /// # 与原始 C++ 的差异
+    /// 原始 C++ 版本没有 WASM 导出层，也没有“按需导出栅格”的调用入口。
+    /// 这个接口是本 fork 为浏览器场景新增的能力，用来减少 WASM 与 JS 之间
+    /// 的大块 JSON 传输。
+    ///
+    /// # 性能说明
+    /// 普通矢量渲染可将 `include_raster_data` 设为 `false`，
+    /// 只有卫星风格或调试栅格数据时才需要导出附加数组。
+    #[wasm_bindgen]
+    pub fn generate_with_options(
+        &mut self,
+        num_cities: i32,
+        num_towns: i32,
+        include_raster_data: bool,
+    ) -> Result<String, JsValue> {
+        // PERF: 将栅格导出显式化，避免普通网页路径总是携带大型 height/flux/mask 数组。
         // 初始化网格
         self.generator.initialize();
 
@@ -81,7 +108,7 @@ impl WasmMapGenerator {
         // 生成城市和城镇
         let label_names = self.get_label_names((2 * num_cities + num_towns) as usize);
         let mut label_idx = label_names.len();
-        
+
         for _ in 0..num_cities {
             if label_idx >= 2 {
                 label_idx -= 2;
@@ -100,7 +127,9 @@ impl WasmMapGenerator {
         }
 
         // 导出为 JSON
-        let json = self.generator.get_draw_data();
+        let json = self.generator.get_draw_data_with_options(MapExportOptions {
+            include_raster_data,
+        });
         Ok(json)
     }
 
@@ -139,21 +168,32 @@ impl WasmMapGenerator {
     fn initialize_heightmap(&mut self) {
         let pad = 5.0;
         let extents = self.generator.get_extents();
-        
+
         let expanded = Extents2d::new(
-            extents.minx - pad, extents.miny - pad,
-            extents.maxx + pad, extents.maxy + pad,
+            extents.minx - pad,
+            extents.miny - pad,
+            extents.maxx + pad,
+            extents.maxy + pad,
         );
 
         // 随机放置山丘和圆锥
         let n = self.generator.rng_mut().random_double(100.0, 250.0) as i32;
         for _ in 0..n {
-            let _px_discard = self.generator.rng_mut().random_double(expanded.minx, expanded.maxx);
-            let px = self.generator.rng_mut().random_double(expanded.minx, expanded.maxx);
-            let py = self.generator.rng_mut().random_double(expanded.miny, expanded.maxy);
+            let _px_discard = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.minx, expanded.maxx);
+            let px = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.minx, expanded.maxx);
+            let py = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.miny, expanded.maxy);
             let r = self.generator.rng_mut().random_double(1.0, 8.0);
             let strength = self.generator.rng_mut().random_double(0.5, 1.5);
-            
+
             if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
                 self.generator.add_hill(px, py, r, strength);
             } else {
@@ -163,9 +203,18 @@ impl WasmMapGenerator {
 
         // 可能添加大型圆锥
         if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
-            let _px_discard = self.generator.rng_mut().random_double(expanded.minx, expanded.maxx);
-            let px = self.generator.rng_mut().random_double(expanded.minx, expanded.maxx);
-            let py = self.generator.rng_mut().random_double(expanded.miny, expanded.maxy);
+            let _px_discard = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.minx, expanded.maxx);
+            let px = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.minx, expanded.maxx);
+            let py = self
+                .generator
+                .rng_mut()
+                .random_double(expanded.miny, expanded.maxy);
             let r = self.generator.rng_mut().random_double(6.0, 12.0);
             let strength = self.generator.rng_mut().random_double(1.0, 3.0);
             self.generator.add_cone(px, py, r, strength);
@@ -173,15 +222,28 @@ impl WasmMapGenerator {
 
         // 可能添加斜坡
         if self.generator.rng_mut().random_double(0.0, 1.0) > 0.1 {
-            let angle = self.generator.rng_mut().random_double(0.0, 2.0 * std::f64::consts::PI);
+            let angle = self
+                .generator
+                .rng_mut()
+                .random_double(0.0, 2.0 * std::f64::consts::PI);
             let dir_x = angle.sin();
             let dir_y = angle.cos();
-            let _lx_discard = self.generator.rng_mut().random_double(extents.minx, extents.maxx);
-            let lx = self.generator.rng_mut().random_double(extents.minx, extents.maxx);
-            let ly = self.generator.rng_mut().random_double(extents.miny, extents.maxy);
+            let _lx_discard = self
+                .generator
+                .rng_mut()
+                .random_double(extents.minx, extents.maxx);
+            let lx = self
+                .generator
+                .rng_mut()
+                .random_double(extents.minx, extents.maxx);
+            let ly = self
+                .generator
+                .rng_mut()
+                .random_double(extents.miny, extents.maxy);
             let slope_width = self.generator.rng_mut().random_double(0.5, 5.0);
             let strength = self.generator.rng_mut().random_double(2.0, 3.0);
-            self.generator.add_slope(lx, ly, dir_x, dir_y, slope_width, strength);
+            self.generator
+                .add_slope(lx, ly, dir_x, dir_y, slope_width, strength);
         }
 
         // 归一化或圆滑
@@ -241,4 +303,21 @@ impl WasmMapGenerator {
 pub fn generate_map_simple(seed: u32, width: u32, height: u32) -> Result<String, JsValue> {
     let mut generator = WasmMapGenerator::new(seed, width, height, 0.08)?;
     generator.generate(5, 10)
+}
+
+/// 根据导出的地图 JSON 和图层配置直接在 Rust 侧生成卫星风格 SVG。
+#[wasm_bindgen]
+pub fn build_satellite_svg(map_json: &str, layers_json: &str) -> Result<String, JsValue> {
+    satellite_svg::build_satellite_svg(map_json, layers_json).map_err(|err| JsValue::from_str(&err))
+}
+
+/// 根据导出的地图 JSON、图层配置和优化选项生成卫星风格 SVG。
+#[wasm_bindgen]
+pub fn build_satellite_svg_with_options(
+    map_json: &str,
+    layers_json: &str,
+    options_json: &str,
+) -> Result<String, JsValue> {
+    satellite_svg::build_satellite_svg_with_options(map_json, layers_json, Some(options_json))
+        .map_err(|err| JsValue::from_str(&err))
 }

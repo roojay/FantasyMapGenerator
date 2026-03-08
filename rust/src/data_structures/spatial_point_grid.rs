@@ -35,8 +35,10 @@ pub struct SpatialPointGrid {
     isize: usize,
     /// 网格 y 方向的单元数
     jsize: usize,
-    /// 网格数据：grid[i + isize * j] 存储单元 (i, j) 中的点
-    grid: Vec<Vec<Point>>,
+    /// 原始点集
+    points: Vec<Point>,
+    /// 网格数据：grid[i + isize * j] 存储单元 (i, j) 中的点索引
+    grid: Vec<Vec<usize>>,
 }
 
 impl SpatialPointGrid {
@@ -60,6 +62,7 @@ impl SpatialPointGrid {
                 offset: Point::new(0.0, 0.0),
                 isize: 0,
                 jsize: 0,
+                points: Vec::new(),
                 grid: Vec::new(),
             };
         }
@@ -68,7 +71,7 @@ impl SpatialPointGrid {
         let ext = get_extents(points);
         let width = ext.maxx - ext.minx;
         let height = ext.maxy - ext.miny;
-        
+
         // 计算网格维度
         let isize = (width / dx).ceil() as usize;
         let jsize = (height / dx).ceil() as usize;
@@ -77,14 +80,14 @@ impl SpatialPointGrid {
 
         // 将点插入到对应的网格单元
         let inv_dx = 1.0 / dx;
-        for &p in points {
+        for (point_idx, &p) in points.iter().enumerate() {
             // 计算点所在的网格单元索引
             let i = ((p.x - ext.minx) * inv_dx).floor() as usize;
             let j = ((p.y - ext.miny) * inv_dx).floor() as usize;
             let idx = i + isize * j;
-            
+
             if idx < grid.len() {
-                grid[idx].push(p);
+                grid[idx].push(point_idx);
             }
         }
 
@@ -93,6 +96,7 @@ impl SpatialPointGrid {
             offset: Point::new(ext.minx, ext.miny),
             isize: isize.max(1),
             jsize: jsize.max(1),
+            points: points.to_vec(),
             grid,
         }
     }
@@ -114,10 +118,12 @@ impl SpatialPointGrid {
     /// # 参考来源
     /// - 原始 C++ 实现: src/spatialpointgrid.cpp, getPointCount()
     pub fn get_point_count(&self, extents: Extents2d) -> usize {
-        if self.isize == 0 || self.jsize == 0 { return 0; }
-        
+        if self.isize == 0 || self.jsize == 0 {
+            return 0;
+        }
+
         let inv_dx = 1.0 / self.dx;
-        
+
         // 计算查询区域对应的网格单元范围
         let mini = ((extents.minx - self.offset.x) * inv_dx).floor() as i64;
         let minj = ((extents.miny - self.offset.y) * inv_dx).floor() as i64;
@@ -135,9 +141,10 @@ impl SpatialPointGrid {
         for j in minj..=maxj {
             for i in mini..=maxi {
                 let idx = i + self.isize * j;
-                
+
                 // 对单元中的每个点进行精确检查
-                for &p in &self.grid[idx] {
+                for &point_idx in &self.grid[idx] {
+                    let p = self.points[point_idx];
                     if extents.contains_point(p) {
                         count += 1;
                     }
@@ -145,6 +152,51 @@ impl SpatialPointGrid {
             }
         }
         count
+    }
+
+    /// 获取指定区域内的点索引
+    ///
+    /// 返回值中的索引对应创建网格时传入的原始点集。
+    ///
+    /// # 与原始 C++ 的差异
+    /// 原始 C++ 版本只有 `getPointCount()`，因为它主要服务于标签碰撞评分。
+    /// Rust 版本额外暴露索引查询，是为了让后续逻辑能够在局部候选集中继续做
+    /// “最近点/最近面”判定，例如 `MapGenerator::export_land_mask()` 的最近面查找。
+    ///
+    /// # 性能说明
+    /// 这个接口本身仍然是局部网格查询 + 精确边界过滤，
+    /// 但相比直接扫描全部点集，更适合需要二次排序或最近邻比较的场景。
+    pub fn get_point_indices(&self, extents: Extents2d) -> Vec<usize> {
+        if self.isize == 0 || self.jsize == 0 {
+            return Vec::new();
+        }
+
+        let inv_dx = 1.0 / self.dx;
+
+        let mini = ((extents.minx - self.offset.x) * inv_dx).floor() as i64;
+        let minj = ((extents.miny - self.offset.y) * inv_dx).floor() as i64;
+        let maxi = ((extents.maxx - self.offset.x) * inv_dx).floor() as i64;
+        let maxj = ((extents.maxy - self.offset.y) * inv_dx).floor() as i64;
+
+        let mini = mini.max(0) as usize;
+        let minj = minj.max(0) as usize;
+        let maxi = (maxi as usize).min(self.isize - 1);
+        let maxj = (maxj as usize).min(self.jsize - 1);
+
+        let mut indices = Vec::new();
+        for j in minj..=maxj {
+            for i in mini..=maxi {
+                let idx = i + self.isize * j;
+                for &point_idx in &self.grid[idx] {
+                    let p = self.points[point_idx];
+                    if extents.contains_point(p) {
+                        indices.push(point_idx);
+                    }
+                }
+            }
+        }
+
+        indices
     }
 }
 
@@ -157,13 +209,13 @@ impl SpatialPointGrid {
 /// 包含所有点的最小边界框
 fn get_extents(points: &[Point]) -> Extents2d {
     let mut e = Extents2d::new(points[0].x, points[0].y, points[0].x, points[0].y);
-    
+
     for p in points {
         e.minx = e.minx.min(p.x);
         e.miny = e.miny.min(p.y);
         e.maxx = e.maxx.max(p.x);
         e.maxy = e.maxy.max(p.y);
     }
-    
+
     e
 }

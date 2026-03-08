@@ -12,6 +12,12 @@ export interface MapLabel {
   text: string;
 }
 
+export interface MapRaster<T extends number = number> {
+  width: number;
+  height: number;
+  data: T[];
+}
+
 export interface MapData {
   city: number[];
   contour: number[][];
@@ -23,6 +29,10 @@ export interface MapData {
   slope: number[];
   territory: number[][];
   town: number[];
+  heightmap?: MapRaster;
+  flux_map?: MapRaster;
+  land_mask?: MapRaster;
+  land_polygons?: number[][];
 }
 
 export interface MapLayers {

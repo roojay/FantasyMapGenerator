@@ -35,19 +35,28 @@ pub struct NodeMap<T: Clone + Default> {
 
 impl<T: Clone + Default> Clone for NodeMap<T> {
     fn clone(&self) -> Self {
-        NodeMap { nodes: self.nodes.clone(), size: self.size }
+        NodeMap {
+            nodes: self.nodes.clone(),
+            size: self.size,
+        }
     }
 }
 
 impl<T: Clone + Default> NodeMap<T> {
     /// 创建指定大小的节点映射，所有值初始化为默认值
     pub fn new(size: usize) -> Self {
-        NodeMap { nodes: vec![T::default(); size], size }
+        NodeMap {
+            nodes: vec![T::default(); size],
+            size,
+        }
     }
 
     /// 创建指定大小的节点映射，所有值初始化为指定值
     pub fn new_filled(size: usize, val: T) -> Self {
-        NodeMap { nodes: vec![val; size], size }
+        NodeMap {
+            nodes: vec![val; size],
+            size,
+        }
     }
 
     /// 获取节点数量
@@ -98,10 +107,12 @@ impl NodeMap<f64> {
         let mn = self.min_val();
         let mx = self.max_val();
         let range = mx - mn;
-        
+
         // 如果所有值相同，不进行归一化
-        if range < 1e-12 { return; }
-        
+        if range < 1e-12 {
+            return;
+        }
+
         for v in self.nodes.iter_mut() {
             *v = (*v - mn) / range;
         }
@@ -141,22 +152,22 @@ impl NodeMap<f64> {
     /// - 原始 C++ 实现: src/nodemap.h, relax()
     pub fn relax(&mut self, vertex_map: &VertexMap, dcel: &Dcel) {
         let mut averages = Vec::with_capacity(self.size);
-        
+
         for i in 0..self.size {
             let v = vertex_map.vertices[i];
             let nbs = vertex_map.get_neighbour_indices(dcel, v);
-            
+
             // 如果没有邻居，保持原值
             if nbs.is_empty() {
                 averages.push(self.nodes[i]);
                 continue;
             }
-            
+
             // 计算邻居的平均值
             let sum: f64 = nbs.iter().map(|&nb| self.nodes[nb]).sum();
             averages.push(sum / nbs.len() as f64);
         }
-        
+
         self.nodes = averages;
     }
 
@@ -182,12 +193,14 @@ impl NodeMap<f64> {
     /// 用于调整地形高度，使海平面（0 值）位于合适的位置，
     /// 从而控制陆地和海洋的比例。
     pub fn set_level_to_median(&mut self) {
-        if self.nodes.is_empty() { return; }
-        
+        if self.nodes.is_empty() {
+            return;
+        }
+
         // 排序以找到中位数
         let mut sorted = self.nodes.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let n = sorted.len();
         let median = if n % 2 == 0 {
             // 偶数个元素，取中间两个的平均值
@@ -196,7 +209,7 @@ impl NodeMap<f64> {
             // 奇数个元素，取中间的元素
             sorted[n / 2]
         };
-        
+
         self.set_level(median);
     }
 }

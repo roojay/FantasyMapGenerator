@@ -80,7 +80,13 @@ impl VertexMap {
             }
         }
 
-        VertexMap { vertices, edge, interior, vertex_id_to_map_index, vertex_types }
+        VertexMap {
+            vertices,
+            edge,
+            interior,
+            vertex_id_to_map_index,
+            vertex_types,
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -107,19 +113,25 @@ impl VertexMap {
 
     pub fn is_edge_vertex(&self, v: Vertex) -> bool {
         let idx = self.get_vertex_index(v);
-        if idx < 0 { return false; }
+        if idx < 0 {
+            return false;
+        }
         self.vertex_types[idx as usize] == VertexType::Edge
     }
 
     pub fn is_interior_vertex(&self, v: Vertex) -> bool {
         let idx = self.get_vertex_index(v);
-        if idx < 0 { return false; }
+        if idx < 0 {
+            return false;
+        }
         self.vertex_types[idx as usize] == VertexType::Interior
     }
 
     pub fn get_neighbour_indices(&self, dcel: &Dcel, v: Vertex) -> Vec<usize> {
         let mut nbs = Vec::new();
-        if !v.incident_edge.is_valid() { return nbs; }
+        if !v.incident_edge.is_valid() {
+            return nbs;
+        }
         let h0 = dcel.incident_edge(v);
         let start = h0.id;
         let mut h = h0;
@@ -128,10 +140,14 @@ impl VertexMap {
             let n = dcel.origin(tw);
             if self.is_vertex(n) {
                 let idx = self.get_vertex_index(n);
-                if idx >= 0 { nbs.push(idx as usize); }
+                if idx >= 0 {
+                    nbs.push(idx as usize);
+                }
             }
             h = dcel.next(tw);
-            if h.id == start { break; }
+            if h.id == start {
+                break;
+            }
         }
         nbs
     }
@@ -170,21 +186,23 @@ fn get_vertex_type(dcel: &Dcel, v: Vertex, extents: Extents2d) -> VertexType {
     let start = h0.id;
     let mut h = h0;
     let mut ncount = 0;
-    
+
     // 统计在边界内的有效邻居数量
     loop {
         let tw = dcel.twin(h);
         let n = dcel.origin(tw);
-        
+
         // 只计数在边界内且非边界顶点的邻居
         if extents.contains_point(n.position) && !is_boundary_vertex(dcel, n) {
             ncount += 1;
         }
-        
+
         h = dcel.next(tw);
-        if h.id == start { break; }
+        if h.id == start {
+            break;
+        }
     }
-    
+
     // 邻居数少于 3 的是边界顶点
     if ncount < 3 {
         VertexType::Edge

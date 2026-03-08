@@ -14,7 +14,7 @@
 //! 使得生成的地图看起来更自然。
 //!
 //! # 参考来源
-//! - R. Bridson, "Fast Poisson Disk Sampling in Arbitrary Dimensions", 
+//! - R. Bridson, "Fast Poisson Disk Sampling in Arbitrary Dimensions",
 //!   ACM SIGGRAPH 2007 Sketches Program, 2007.
 //! - M. O'Leary, "Generating fantasy maps", https://mewo2.com/notes/terrain/
 //! - 原始 C++ 实现: src/poissondiscsampler.h, src/poissondiscsampler.cpp
@@ -36,16 +36,16 @@ use crate::utils::rand::GlibcRand;
 struct SampleGrid {
     /// 采样区域的边界
     bounds: Extents2d,
-    
+
     /// 网格的宽度（单元数）
     width: usize,
-    
+
     /// 网格的高度（单元数）
     height: usize,
-    
+
     /// 单元的边长
     dx: f64,
-    
+
     /// 网格数据，存储每个单元中的采样点索引（-1 表示空）
     grid: Vec<i32>,
 }
@@ -59,15 +59,21 @@ impl SampleGrid {
     fn new(extents: Extents2d, cellsize: f64) -> Self {
         let bw = extents.maxx - extents.minx;
         let bh = extents.maxy - extents.miny;
-        
+
         // 计算需要多少个单元来覆盖整个区域
         let width = (bw / cellsize).ceil() as usize;
         let height = (bh / cellsize).ceil() as usize;
-        
+
         // 初始化网格，-1 表示单元为空
         let grid = vec![-1i32; width * height];
-        
-        SampleGrid { bounds: extents, width, height, dx: cellsize, grid }
+
+        SampleGrid {
+            bounds: extents,
+            width,
+            height,
+            dx: cellsize,
+            grid,
+        }
     }
 
     /// 将二维索引转换为一维数组索引
@@ -153,7 +159,9 @@ fn is_sample_valid(p: Point, r: f64, points: &[Point], grid: &SampleGrid) -> boo
     for j in minj..=maxj {
         for i in mini..=maxi {
             let sid = grid.get_sample(i, j);
-            if sid == -1 { continue; }
+            if sid == -1 {
+                continue;
+            }
             let o = points[sid as usize];
             let dx = p.x - o.x;
             let dy = p.y - o.y;
@@ -220,7 +228,7 @@ fn find_disc_point(
 /// 空间复杂度：O(n)
 ///
 /// # 参考来源
-/// - R. Bridson, "Fast Poisson Disk Sampling in Arbitrary Dimensions", 
+/// - R. Bridson, "Fast Poisson Disk Sampling in Arbitrary Dimensions",
 ///   ACM SIGGRAPH 2007 Sketches Program, 2007.
 /// - 原始 C++ 实现: src/poissondiscsampler.cpp, generateSamples()
 pub fn generate_samples(rng: &mut GlibcRand, bounds: Extents2d, r: f64, k: usize) -> Vec<Point> {
@@ -261,7 +269,7 @@ pub fn generate_samples(rng: &mut GlibcRand, bounds: Extents2d, r: f64, k: usize
                 let new_idx = points.len();
                 active_list.push(new_idx);
                 points.push(new_point);
-                
+
                 // 在网格中记录新点的位置
                 let (ni, nj) = grid.get_cell(new_point);
                 grid.set_sample(ni, nj, new_idx as i32);

@@ -124,13 +124,17 @@ impl FontFace {
     /// - 原始 C++ 实现: src/fontface.cpp, setFontFaceSize()
     pub fn set_font_face_size(&mut self, name: &str, size: i32) -> bool {
         // 检查字体是否存在
-        if self.data.get(name).is_none() { return false; }
-        
+        if self.data.get(name).is_none() {
+            return false;
+        }
+
         let size_str = size.to_string();
-        
+
         // 检查字体大小是否存在
-        if self.data[name].get(&size_str).is_none() { return false; }
-        
+        if self.data[name].get(&size_str).is_none() {
+            return false;
+        }
+
         self.font_face = name.to_string();
         self.font_size = size_str;
         true
@@ -203,7 +207,7 @@ impl FontFace {
     pub fn get_character_extents(&self, text: &str) -> Vec<TextExtents> {
         let mut extents = Vec::new();
         let mut x = 0.0f64;
-        
+
         for c in text.chars() {
             let mut ce = self.get_char_extents(c);
             // 调整 X 偏移为绝对位置
@@ -211,7 +215,7 @@ impl FontFace {
             x += ce.dx;
             extents.push(ce);
         }
-        
+
         extents
     }
 
@@ -232,14 +236,14 @@ impl FontFace {
         let char_data = &self.data[&self.font_face][&self.font_size][&key];
         let arr = char_data.as_array();
         let mut data = [0.0f64; 6];
-        
+
         // 解析字符度量数据：[offx, offy, width, height, dx, dy]
         if let Some(arr) = arr {
             for (i, v) in arr.iter().enumerate().take(6) {
                 data[i] = v.as_f64().unwrap_or(0.0);
             }
         }
-        
+
         TextExtents {
             offx: data[0],
             offy: data[1],

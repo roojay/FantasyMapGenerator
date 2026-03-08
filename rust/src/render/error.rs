@@ -11,22 +11,22 @@ use std::fmt;
 pub enum RenderError {
     /// WebGPU 适配器初始化失败
     AdapterNotFound,
-    
+
     /// WebGPU 设备创建失败
     DeviceCreationFailed(String),
-    
+
     /// 缓冲区映射失败
     BufferMapFailed,
-    
+
     /// 图像创建失败
     ImageCreationFailed,
-    
+
     /// 图像保存失败
     ImageSaveFailed(std::io::Error),
-    
+
     /// JSON 解析失败
     JsonParseFailed(serde_json::Error),
-    
+
     /// 无效的 JSON 数据格式
     InvalidJsonFormat(String),
 }

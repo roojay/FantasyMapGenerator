@@ -1,7 +1,6 @@
 import { ActionIcon, Box, Button, Menu, SegmentedControl, Tooltip, useMantineColorScheme } from "@mantine/core";
 import {
   IconChevronDown,
-  IconDownload,
   IconFileDownload,
   IconFileUpload,
   IconFocus2,

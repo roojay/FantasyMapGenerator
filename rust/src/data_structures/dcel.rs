@@ -83,19 +83,19 @@ impl Ref {
 pub struct HalfEdge {
     /// 半边的起点顶点
     pub origin: Ref,
-    
+
     /// 对偶半边（方向相反的另一条半边）
     pub twin: Ref,
-    
+
     /// 半边左侧的面
     pub incident_face: Ref,
-    
+
     /// 沿着面边界的下一条半边
     pub next: Ref,
-    
+
     /// 沿着面边界的上一条半边
     pub prev: Ref,
-    
+
     /// 半边自身的 ID
     pub id: Ref,
 }
@@ -127,7 +127,7 @@ impl HalfEdge {
 pub struct Face {
     /// 外边界的一条半边（任意一条即可）
     pub outer_component: Ref,
-    
+
     /// 面自身的 ID
     pub id: Ref,
 }
@@ -155,10 +155,10 @@ impl Face {
 pub struct Vertex {
     /// 顶点在平面上的位置
     pub position: Point,
-    
+
     /// 从该顶点出发的任意一条半边
     pub incident_edge: Ref,
-    
+
     /// 顶点自身的 ID
     pub id: Ref,
 }
@@ -202,10 +202,10 @@ impl Vertex {
 pub struct Dcel {
     /// 所有顶点的集合
     pub vertices: Vec<Vertex>,
-    
+
     /// 所有半边的集合
     pub edges: Vec<HalfEdge>,
-    
+
     /// 所有面的集合
     pub faces: Vec<Face>,
 }
@@ -213,7 +213,11 @@ pub struct Dcel {
 impl Dcel {
     /// 创建一个空的 DCEL
     pub fn new() -> Self {
-        Dcel { vertices: Vec::new(), edges: Vec::new(), faces: Vec::new() }
+        Dcel {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+        }
     }
 
     // ===================================
@@ -367,7 +371,9 @@ impl Dcel {
         loop {
             edges.push(h);
             h = self.next(h);
-            if h.id == start { break; }
+            if h.id == start {
+                break;
+            }
         }
         edges
     }
@@ -398,7 +404,9 @@ impl Dcel {
             edges.push(h);
             let tw = self.twin(h);
             h = self.next(tw);
-            if h.id == start { break; }
+            if h.id == start {
+                break;
+            }
         }
         edges
     }
@@ -424,7 +432,9 @@ impl Dcel {
             }
             let tw = self.twin(h);
             h = self.next(tw);
-            if h.id == start { break; }
+            if h.id == start {
+                break;
+            }
         }
         faces
     }
@@ -465,11 +475,15 @@ impl Dcel {
                 return true;
             }
             h = self.next(tw);
-            if h.id == start { break; }
-            
+            if h.id == start {
+                break;
+            }
+
             // 安全检查：防止无限循环
             count += 1;
-            if count > 1000 { return true; }
+            if count > 1000 {
+                return true;
+            }
         }
         false
     }

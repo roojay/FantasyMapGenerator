@@ -53,7 +53,7 @@ pub fn run() -> Result<()> {
     eprintln!("Generating map with seed value: {}", seed);
 
     let mut rng = GlibcRand::new(seed);
-    
+
     // 预热随机数生成器
     // 这与 C++ 版本保持一致，确保相同的随机数序列
     for _ in 0..1000 {
@@ -64,7 +64,7 @@ pub fn run() -> Result<()> {
     // 3. 计算地图范围
     // ===================================
     let (img_w, img_h) = cfg.image_size();
-    
+
     // 地图的逻辑高度固定为 20.0
     // 宽度根据图像宽高比计算，保持正确的纵横比
     let default_extents_height = 20.0f64;
@@ -79,14 +79,30 @@ pub fn run() -> Result<()> {
     map.set_draw_scale(cfg.draw_scale);
 
     // 根据命令行参数禁用某些特性
-    if cfg.no_slopes { map.disable_slopes(); }
-    if cfg.no_rivers { map.disable_rivers(); }
-    if cfg.no_contour { map.disable_contour(); }
-    if cfg.no_borders { map.disable_borders(); }
-    if cfg.no_cities { map.disable_cities(); }
-    if cfg.no_towns { map.disable_towns(); }
-    if cfg.no_labels { map.disable_labels(); }
-    if cfg.no_arealabels { map.disable_area_labels(); }
+    if cfg.no_slopes {
+        map.disable_slopes();
+    }
+    if cfg.no_rivers {
+        map.disable_rivers();
+    }
+    if cfg.no_contour {
+        map.disable_contour();
+    }
+    if cfg.no_borders {
+        map.disable_borders();
+    }
+    if cfg.no_cities {
+        map.disable_cities();
+    }
+    if cfg.no_towns {
+        map.disable_towns();
+    }
+    if cfg.no_labels {
+        map.disable_labels();
+    }
+    if cfg.no_arealabels {
+        map.disable_area_labels();
+    }
 
     // ===================================
     // 5. 生成不规则网格
@@ -110,14 +126,25 @@ pub fn run() -> Result<()> {
         // 如果未指定，随机选择侵蚀量
         map.rng_mut().random_double(0.2, 0.35)
     };
-    eprintln!("Eroding height map by {} over {} iterations...", erosion_amount, erosion_steps);
+    eprintln!(
+        "Eroding height map by {} over {} iterations...",
+        erosion_amount, erosion_steps
+    );
     erode(&mut map, erosion_amount, erosion_steps);
 
     // ===================================
     // 8. 放置城市和城镇
     // ===================================
-    let num_cities = if cfg.cities >= 0 { cfg.cities } else { map.rng_mut().random_range(3, 7) };
-    let num_towns = if cfg.towns >= 0 { cfg.towns } else { map.rng_mut().random_range(8, 25) };
+    let num_cities = if cfg.cities >= 0 {
+        cfg.cities
+    } else {
+        map.rng_mut().random_range(3, 7)
+    };
+    let num_towns = if cfg.towns >= 0 {
+        cfg.towns
+    } else {
+        map.rng_mut().random_range(8, 25)
+    };
 
     let num_labels = 2 * num_cities + num_towns;
     let label_names = get_label_names(num_labels as usize, map.rng_mut());
@@ -165,7 +192,7 @@ pub fn run() -> Result<()> {
             } else {
                 format!("{}.png", cfg.output)
             };
-            
+
             eprintln!("Rendering map to PNG...");
             render_map(&draw_data, &png_file)?;
             eprintln!("Wrote map image to file: {}", png_file);
@@ -202,11 +229,13 @@ pub fn run() -> Result<()> {
 fn initialize_heightmap(map: &mut MapGenerator) {
     let pad = 5.0f64;
     let extents = map.get_extents();
-    
+
     // 扩展地图边界，在边界外也放置地形特征
     let expanded = Extents2d::new(
-        extents.minx - pad, extents.miny - pad,
-        extents.maxx + pad, extents.maxy + pad,
+        extents.minx - pad,
+        extents.miny - pad,
+        extents.maxx + pad,
+        extents.maxy + pad,
     );
 
     // ===================================
@@ -221,7 +250,7 @@ fn initialize_heightmap(map: &mut MapGenerator) {
         let py = map.rng_mut().random_double(expanded.miny, expanded.maxy);
         let r = map.rng_mut().random_double(1.0, 8.0);
         let strength = map.rng_mut().random_double(0.5, 1.5);
-        
+
         // 50% 概率选择山丘或圆锥
         if map.rng_mut().random_double(0.0, 1.0) > 0.5 {
             map.add_hill(px, py, r, strength);
@@ -295,7 +324,7 @@ fn erode(map: &mut MapGenerator, amount: f64, iterations: i32) {
         // 每次迭代应用部分侵蚀量
         map.erode(amount / iterations as f64);
     }
-    
+
     // 侵蚀后调整海平面到中位数
     // 这样可以保持陆地和海洋的比例
     map.set_sea_level_to_median();
@@ -372,10 +401,9 @@ fn get_label_names(num: usize, rng: &mut GlibcRand) -> Vec<String> {
 #[cfg(feature = "render")]
 fn render_map(draw_data: &str, output_path: &str) -> Result<()> {
     use crate::render::render_map as do_render;
-    
+
     // 使用便捷函数渲染
-    do_render(draw_data, output_path)
-        .map_err(|e| anyhow::anyhow!("渲染失败: {}", e))?;
-    
+    do_render(draw_data, output_path).map_err(|e| anyhow::anyhow!("渲染失败: {}", e))?;
+
     Ok(())
 }

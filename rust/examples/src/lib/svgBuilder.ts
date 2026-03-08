@@ -91,14 +91,15 @@ export function generateSVGString(
   }
 
   if (enabledLayers.label && mapData.label.length > 0) {
-    svg += `<g fill="${styles.TEXT_RGBA}">`;
+    svg += `<g>`;
     const fontMap: Record<string, string> = { "Times New Roman": "serif" };
     for (const label of mapData.label) {
       const x = round(label.position[0] * width);
       const y = round(height - label.position[1] * height);
       const fontFamily = fontMap[label.fontface] ?? label.fontface ?? "serif";
       const safeText = label.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      svg += `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${label.fontsize}" text-anchor="start" dominant-baseline="alphabetic">${safeText}</text>`;
+      svg += `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${label.fontsize}" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" paint-order="stroke fill" text-anchor="start" dominant-baseline="alphabetic">${safeText}</text>`;
+      svg += `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${label.fontsize}" fill="${styles.TEXT_RGBA}" text-anchor="start" dominant-baseline="alphabetic">${safeText}</text>`;
     }
     svg += "</g>";
   }

@@ -9,6 +9,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src")
     }
   },
+  worker: {
+    format: "es"
+  },
   assetsInclude: ["**/*.wasm"],
   server: {
     host: "0.0.0.0",

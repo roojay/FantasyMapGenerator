@@ -16,18 +16,18 @@ impl Color {
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
-    
+
     /// 转换为数组格式
     pub const fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
-    
+
     /// 白色
     pub const WHITE: Self = Self::new(1.0, 1.0, 1.0, 1.0);
-    
+
     /// 黑色
     pub const BLACK: Self = Self::new(0.0, 0.0, 0.0, 1.0);
-    
+
     /// 半透明黑色
     pub const BLACK_TRANSPARENT: Self = Self::new(0.0, 0.0, 0.0, 0.75);
 }
@@ -56,43 +56,43 @@ impl From<Color> for wgpu::Color {
 pub struct RenderStyle {
     /// 背景颜色
     pub background_color: Color,
-    
+
     /// 坡度阴影颜色
     pub slope_color: Color,
-    
+
     /// 河流颜色
     pub river_color: Color,
-    
+
     /// 等高线颜色
     pub contour_color: Color,
-    
+
     /// 边界颜色
     pub border_color: Color,
-    
+
     /// 标记颜色
     pub marker_color: Color,
-    
+
     /// 文字颜色
     pub text_color: Color,
-    
+
     /// 坡度线宽（像素）
     pub slope_line_width: f32,
-    
+
     /// 河流线宽（像素）
     pub river_line_width: f32,
-    
+
     /// 等高线线宽（像素）
     pub contour_line_width: f32,
-    
+
     /// 边界线宽（像素）
     pub border_line_width: f32,
-    
+
     /// 城市标记外圆半径（像素）
     pub city_marker_outer_radius: f32,
-    
+
     /// 城市标记内圆半径（像素）
     pub city_marker_inner_radius: f32,
-    
+
     /// 城镇标记半径（像素）
     pub town_marker_radius: f32,
 }

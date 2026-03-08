@@ -98,23 +98,31 @@ pub fn triangulate(points: &mut Vec<Point>) -> Dcel {
 /// - 原始 C++ 实现: src/delaunay.cpp, getSuperTriangle()
 fn get_super_triangle(points: &[Point]) -> (Point, Point, Point) {
     let eps = 1e-3;
-    
+
     // 计算点集的边界框
     let mut minx = points[0].x;
     let mut miny = points[0].y;
     let mut maxx = minx + eps;
     let mut maxy = miny + eps;
     for p in points {
-        if p.x < minx { minx = p.x; }
-        if p.y < miny { miny = p.y; }
-        if p.x > maxx { maxx = p.x; }
-        if p.y > maxy { maxy = p.y; }
+        if p.x < minx {
+            minx = p.x;
+        }
+        if p.y < miny {
+            miny = p.y;
+        }
+        if p.x > maxx {
+            maxx = p.x;
+        }
+        if p.y > maxy {
+            maxy = p.y;
+        }
     }
-    
+
     // 扩展边界框，确保超级三角形足够大
     let expand = f64::max(0.1 * (maxx - minx), 0.1 * (maxy - miny));
     minx -= expand;
-    miny -= 5.0 * expand;  // 底边向下扩展更多，确保所有点都在三角形内
+    miny -= 5.0 * expand; // 底边向下扩展更多，确保所有点都在三角形内
     maxx += expand;
     maxy += expand;
 
@@ -248,10 +256,12 @@ fn is_point_inside_triangle(p: Point, f: &Face, t: &Dcel) -> bool {
 
     // 计算三角形面积
     let area = 0.5 * (-p1.y * p2.x + p0.y * (-p1.x + p2.x) + p0.x * (p1.y - p2.y) + p1.x * p2.y);
-    
+
     // 计算重心坐标
-    let s = 1.0 / (2.0 * area) * (p0.y * p2.x - p0.x * p2.y + (p2.y - p0.y) * p.x + (p0.x - p2.x) * p.y);
-    let t_val = 1.0 / (2.0 * area) * (p0.x * p1.y - p0.y * p1.x + (p0.y - p1.y) * p.x + (p1.x - p0.x) * p.y);
+    let s = 1.0 / (2.0 * area)
+        * (p0.y * p2.x - p0.x * p2.y + (p2.y - p0.y) * p.x + (p0.x - p2.x) * p.y);
+    let t_val = 1.0 / (2.0 * area)
+        * (p0.x * p1.y - p0.y * p1.x + (p0.y - p1.y) * p.x + (p1.x - p0.x) * p.y);
 
     // 检查重心坐标是否都非负
     s >= 0.0 && t_val >= 0.0 && 1.0 - s - t_val >= 0.0
@@ -330,14 +340,14 @@ fn locate_triangle_at_point(p: Point, t: &Dcel) -> Face {
     if t.faces.is_empty() {
         return Face::new();
     }
-    
+
     // 从第一个面开始
     let mut f = t.face(Ref::new(0));
-    
+
     // 最大迭代次数：与三角形数量的平方根成正比
     let max_count = (2.0 * (t.faces.len() as f64).sqrt()) as i32;
     let mut count = 0;
-    
+
     // 记录最近访问的 3 个面，用于检测循环
     let mut face_history = [-1i32; 3];
 
@@ -346,13 +356,13 @@ fn locate_triangle_at_point(p: Point, t: &Dcel) -> Face {
         if is_point_inside_triangle(p, &f, t) {
             return f;
         }
-        
+
         // 从重心向目标点移动，找到穿过的边
         let p0 = compute_triangle_centroid(&f, t);
         let mut neighbour_found = false;
         let h0 = t.outer_component(&f);
         let mut h = h0;
-        
+
         // 检查三条边
         for _ in 0..3 {
             if is_segment_intersecting_edge(p0, p, h, t) {
@@ -365,20 +375,26 @@ fn locate_triangle_at_point(p: Point, t: &Dcel) -> Face {
             }
             h = t.next(h);
         }
-        
-        if !neighbour_found { break; }
+
+        if !neighbour_found {
+            break;
+        }
 
         // 更新访问历史，检测循环
         face_history[2] = face_history[1];
         face_history[1] = face_history[0];
         face_history[0] = f.id.id;
-        if face_history[0] == face_history[2] { break; }
+        if face_history[0] == face_history[2] {
+            break;
+        }
 
         // 检查迭代次数
         count += 1;
-        if count > max_count { break; }
+        if count > max_count {
+            break;
+        }
     }
-    
+
     Face::new()
 }
 
@@ -407,10 +423,12 @@ fn point_to_edge_distance(p0: Point, h: HalfEdge, t: &Dcel) -> f64 {
     let vx = p2.x - p1.x;
     let vy = p2.y - p1.y;
     let len = (vx * vx + vy * vy).sqrt();
-    
+
     // 边长度为 0，返回无穷大
-    if len < 1e-12 { return f64::INFINITY; }
-    
+    if len < 1e-12 {
+        return f64::INFINITY;
+    }
+
     // 计算垂直距离
     ((vx * (p1.y - p0.y) - (p1.x - p0.x) * vy) / len).abs()
 }
@@ -753,39 +771,39 @@ fn insert_point_into_triangle_edge(p: Point, _f: Face, h: HalfEdge, t: &mut Dcel
 /// - 原始 C++ 实现: src/delaunay.cpp, isEdgeLegal()
 fn is_edge_legal(pr: Vertex, e: HalfEdge, t: &Dcel) -> bool {
     let tw = t.twin(e);
-    
+
     // 边界边总是合法的
     if t.is_boundary(tw) {
         return true;
     }
-    
+
     let p0 = pr.position;
     let pi = t.origin(e).position;
     let pj = t.origin(tw).position;
     let pk = t.origin(t.prev(tw)).position;
 
     // 计算边 pi-pj 的垂直平分线
-    let p = Point::new(0.5 * (pi.x + pj.x), 0.5 * (pi.y + pj.y));  // 中点
-    let r = Point::new(-(pj.y - pi.y), pj.x - pi.x);  // 垂直方向向量
-    
+    let p = Point::new(0.5 * (pi.x + pj.x), 0.5 * (pi.y + pj.y)); // 中点
+    let r = Point::new(-(pj.y - pi.y), pj.x - pi.x); // 垂直方向向量
+
     // 计算边 pi-p0 的垂直平分线
-    let q = Point::new(0.5 * (pi.x + p0.x), 0.5 * (pi.y + p0.y));  // 中点
-    let s = Point::new(-(p0.y - pi.y), p0.x - pi.x);  // 垂直方向向量
+    let q = Point::new(0.5 * (pi.x + p0.x), 0.5 * (pi.y + p0.y)); // 中点
+    let s = Point::new(-(p0.y - pi.y), p0.x - pi.x); // 垂直方向向量
 
     // 两条垂直平分线的交点即为外接圆圆心
     match line_intersection(p, r, q, s) {
-        None => false,  // 平行，不应该发生
+        None => false, // 平行，不应该发生
         Some(center) => {
             // 计算外接圆半径的平方
             let dvx = p0.x - center.x;
             let dvy = p0.y - center.y;
             let crsq = dvx * dvx + dvy * dvy;
-            
+
             // 计算对面顶点到圆心的距离平方
             let dkx = pk.x - center.x;
             let dky = pk.y - center.y;
             let distsq = dkx * dkx + dky * dky;
-            
+
             // 如果对面顶点在圆外或圆上，边合法
             distsq >= crsq
         }
@@ -937,30 +955,48 @@ fn cleanup(t: &mut Dcel) {
     if t.vertices.len() < 3 {
         return;
     }
-    let super_ids = [t.vertices[0].id.id, t.vertices[1].id.id, t.vertices[2].id.id];
+    let super_ids = [
+        t.vertices[0].id.id,
+        t.vertices[1].id.id,
+        t.vertices[2].id.id,
+    ];
 
     // Mark invalid faces (containing super-triangle vertices)
-    let invalid_faces: Vec<bool> = t.faces.iter().map(|f| {
-        if !f.outer_component.is_valid() { return false; }
-        let h = t.edges[f.outer_component.id as usize];
-        let h2 = t.edges[h.next.id as usize];
-        let h3 = t.edges[h2.next.id as usize];
-        let v0 = h.origin.id;
-        let v1 = h2.origin.id;
-        let v2 = h3.origin.id;
-        super_ids.contains(&v0) || super_ids.contains(&v1) || super_ids.contains(&v2)
-    }).collect();
+    let invalid_faces: Vec<bool> = t
+        .faces
+        .iter()
+        .map(|f| {
+            if !f.outer_component.is_valid() {
+                return false;
+            }
+            let h = t.edges[f.outer_component.id as usize];
+            let h2 = t.edges[h.next.id as usize];
+            let h3 = t.edges[h2.next.id as usize];
+            let v0 = h.origin.id;
+            let v1 = h2.origin.id;
+            let v2 = h3.origin.id;
+            super_ids.contains(&v0) || super_ids.contains(&v1) || super_ids.contains(&v2)
+        })
+        .collect();
 
     // Mark invalid edges (incident to invalid face or whose twin is incident to invalid face on the other side)
-    let invalid_edges: Vec<bool> = t.edges.iter().map(|e| {
-        if !e.incident_face.is_valid() { return true; }
-        invalid_faces[e.incident_face.id as usize]
-    }).collect();
+    let invalid_edges: Vec<bool> = t
+        .edges
+        .iter()
+        .map(|e| {
+            if !e.incident_face.is_valid() {
+                return true;
+            }
+            invalid_faces[e.incident_face.id as usize]
+        })
+        .collect();
 
     // Remove super-triangle vertices
-    let invalid_verts: Vec<bool> = t.vertices.iter().map(|v| {
-        super_ids.contains(&v.id.id)
-    }).collect();
+    let invalid_verts: Vec<bool> = t
+        .vertices
+        .iter()
+        .map(|v| super_ids.contains(&v.id.id))
+        .collect();
 
     // Build new indices
     let mut new_vert_idx = vec![-1i32; t.vertices.len()];
@@ -992,21 +1028,30 @@ fn cleanup(t: &mut Dcel) {
 
     // Remap
     let remap_ref = |r: Ref, new_idx: &[i32]| -> Ref {
-        if !r.is_valid() { return r; }
+        if !r.is_valid() {
+            return r;
+        }
         let new = new_idx[r.id as usize];
         Ref::new(new)
     };
 
-    let new_verts: Vec<Vertex> = t.vertices.iter().enumerate()
+    let new_verts: Vec<Vertex> = t
+        .vertices
+        .iter()
+        .enumerate()
         .filter(|(i, _)| !invalid_verts[*i])
         .map(|(_, v)| {
             let mut v2 = *v;
             v2.id = Ref::new(new_vert_idx[v.id.id as usize]);
             v2.incident_edge = remap_ref(v.incident_edge, &new_edge_idx);
             v2
-        }).collect();
+        })
+        .collect();
 
-    let new_edges: Vec<HalfEdge> = t.edges.iter().enumerate()
+    let new_edges: Vec<HalfEdge> = t
+        .edges
+        .iter()
+        .enumerate()
         .filter(|(i, _)| !invalid_edges[*i])
         .map(|(_, e)| {
             let mut e2 = *e;
@@ -1017,16 +1062,21 @@ fn cleanup(t: &mut Dcel) {
             e2.next = remap_ref(e.next, &new_edge_idx);
             e2.prev = remap_ref(e.prev, &new_edge_idx);
             e2
-        }).collect();
+        })
+        .collect();
 
-    let new_faces: Vec<Face> = t.faces.iter().enumerate()
+    let new_faces: Vec<Face> = t
+        .faces
+        .iter()
+        .enumerate()
         .filter(|(i, _)| !invalid_faces[*i])
         .map(|(_, f)| {
             let mut f2 = f.clone();
             f2.id = Ref::new(new_face_idx[f.id.id as usize]);
             f2.outer_component = remap_ref(f.outer_component, &new_edge_idx);
             f2
-        }).collect();
+        })
+        .collect();
 
     t.vertices = new_verts;
     t.edges = new_edges;

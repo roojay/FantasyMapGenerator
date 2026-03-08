@@ -235,7 +235,9 @@ impl MapRenderer {
         let draw_scale = data["draw_scale"].as_f64().unwrap_or(1.0) as f32;
         let style = self.style.with_scale(draw_scale);
 
-        let view = self.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = self
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self
             .device
@@ -540,12 +542,7 @@ impl MapRenderer {
             let x = positions[i].as_f64().unwrap_or(0.0) as f32;
             let y = 1.0 - positions[i + 1].as_f64().unwrap_or(0.0) as f32;
 
-            vertices.extend(self.create_circle_vertices(
-                x,
-                y,
-                radius / self.width as f32,
-                color,
-            ));
+            vertices.extend(self.create_circle_vertices(x, y, radius / self.width as f32, color));
         }
 
         if !vertices.is_empty() {
@@ -675,7 +672,7 @@ impl MapRenderer {
         let unpadded_bytes_per_row = 4 * self.width;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
-        
+
         // 创建缓冲区用于读取纹理数据
         let buffer_size = (padded_bytes_per_row * self.height) as wgpu::BufferAddress;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -727,10 +724,11 @@ impl MapRenderer {
             .map_err(|_| RenderError::BufferMapFailed)?;
 
         let data = buffer_slice.get_mapped_range();
-        
+
         // If there's padding, we need to remove it when creating the image
         let image = if padded_bytes_per_row != unpadded_bytes_per_row {
-            let mut unpadded_data = Vec::with_capacity((unpadded_bytes_per_row * self.height) as usize);
+            let mut unpadded_data =
+                Vec::with_capacity((unpadded_bytes_per_row * self.height) as usize);
             for row in 0..self.height {
                 let start = (row * padded_bytes_per_row) as usize;
                 let end = start + unpadded_bytes_per_row as usize;
@@ -740,7 +738,7 @@ impl MapRenderer {
         } else {
             image::RgbaImage::from_raw(self.width, self.height, data.to_vec())
         };
-        
+
         let image = image.ok_or(RenderError::ImageCreationFailed)?;
         image.save(path)?;
 

@@ -63,6 +63,45 @@ export class WasmMapGenerator {
         }
     }
     /**
+     * 生成完整地图，并允许网页端按需决定是否导出附加栅格数据。
+     *
+     * # 参数
+     * * `num_cities` - 城市数量
+     * * `num_towns` - 城镇数量
+     * * `include_raster_data` - 是否导出供卫星风格渲染使用的栅格数据
+     *
+     * # 与原始 C++ 的差异
+     * 原始 C++ 版本没有 WASM 导出层，也没有“按需导出栅格”的调用入口。
+     * 这个接口是本 fork 为浏览器场景新增的能力，用来减少 WASM 与 JS 之间
+     * 的大块 JSON 传输。
+     *
+     * # 性能说明
+     * 普通矢量渲染可将 `include_raster_data` 设为 `false`，
+     * 只有卫星风格或调试栅格数据时才需要导出附加数组。
+     * @param {number} num_cities
+     * @param {number} num_towns
+     * @param {boolean} include_raster_data
+     * @returns {string}
+     */
+    generate_with_options(num_cities, num_towns, include_raster_data) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.wasmmapgenerator_generate_with_options(this.__wbg_ptr, num_cities, num_towns, include_raster_data);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
      * 获取当前使用的种子
      * @returns {number}
      */
@@ -101,6 +140,67 @@ export class WasmMapGenerator {
     }
 }
 if (Symbol.dispose) WasmMapGenerator.prototype[Symbol.dispose] = WasmMapGenerator.prototype.free;
+
+/**
+ * 根据导出的地图 JSON 和图层配置直接在 Rust 侧生成卫星风格 SVG。
+ * @param {string} map_json
+ * @param {string} layers_json
+ * @returns {string}
+ */
+export function build_satellite_svg(map_json, layers_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(map_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layers_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_satellite_svg(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * 根据导出的地图 JSON、图层配置和优化选项生成卫星风格 SVG。
+ * @param {string} map_json
+ * @param {string} layers_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function build_satellite_svg_with_options(map_json, layers_json, options_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(map_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layers_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.build_satellite_svg_with_options(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
 
 /**
  * 简化的地图生成函数（用于快速测试）
@@ -166,6 +266,11 @@ function __wbg_get_imports() {
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
+            return ret;
         },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;

@@ -56,7 +56,8 @@ const resources = {
         border: "边境线",
         city: "城市",
         town: "城镇",
-        label: "标签"
+        label: "标签",
+        satellite: "卫星风格"
       },
       status: {
         booting: "正在初始化 WASM…",
@@ -150,7 +151,8 @@ const resources = {
         border: "Borders",
         city: "Cities",
         town: "Towns",
-        label: "Labels"
+        label: "Labels",
+        satellite: "Satellite"
       },
       status: {
         booting: "Initializing WASM…",

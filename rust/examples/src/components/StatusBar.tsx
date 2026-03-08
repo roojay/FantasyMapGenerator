@@ -1,4 +1,4 @@
-import { Box, Group, Menu, Text } from "@mantine/core";
+import { Box, Menu, Text } from "@mantine/core";
 import { IconChevronDown } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 

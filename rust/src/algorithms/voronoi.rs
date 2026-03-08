@@ -50,7 +50,7 @@ use crate::data_structures::geometry::line_intersection;
 /// - 原始 C++ 实现: src/voronoi.cpp, delaunayToVoronoi()
 pub fn delaunay_to_voronoi(t: &Dcel) -> Dcel {
     let mut v = Dcel::new();
-    
+
     // ===================================
     // 1. 创建 Voronoi 顶点
     // ===================================
@@ -67,7 +67,7 @@ pub fn delaunay_to_voronoi(t: &Dcel) -> Dcel {
     // ===================================
     // 2. 创建 Voronoi 边
     // ===================================
-    // vertex_edges[vi] = [(vj, edge_id), ...] 
+    // vertex_edges[vi] = [(vj, edge_id), ...]
     // 记录从顶点 vi 到顶点 vj 的边的 ID
     let mut vertex_edges: Vec<Vec<(usize, usize)>> = vec![Vec::new(); v.vertices.len()];
     init_vertex_edge_table(t, &mut v, &delaunay_face_to_vertex_table, &mut vertex_edges);
@@ -79,15 +79,16 @@ pub fn delaunay_to_voronoi(t: &Dcel) -> Dcel {
     // 每个 Delaunay 顶点对应一个 Voronoi 面
     for vidx in 0..t.vertices.len() {
         let dv = t.vertices[vidx];
-        
+
         // 跳过边界顶点（它们的 Voronoi 单元是无界的）
         if t.is_boundary_vertex_check(dv) {
             continue;
         }
 
         // 获取围绕该 Delaunay 顶点的 Voronoi 边
-        let edge_loop = get_voronoi_cell_edge_loop(dv, t, &v, &delaunay_face_to_vertex_table, &vertex_edges);
-        
+        let edge_loop =
+            get_voronoi_cell_edge_loop(dv, t, &v, &delaunay_face_to_vertex_table, &vertex_edges);
+
         // 从边环创建 Voronoi 面
         init_voronoi_face_from_edge_loop(&edge_loop, &mut v, &mut vertex_edges);
     }
@@ -126,16 +127,16 @@ fn compute_voronoi_vertex(t: &Dcel, f: &Face) -> Point {
     let pj = t.origin(t.prev(h)).position;
 
     // 第一条中垂线：边 pi-pj 的中垂线
-    let p = Point::new(0.5 * (pi.x + pj.x), 0.5 * (pi.y + pj.y));  // 中点
-    let r = Point::new(-(pj.y - pi.y), pj.x - pi.x);  // 垂直向量（旋转90度）
-    
+    let p = Point::new(0.5 * (pi.x + pj.x), 0.5 * (pi.y + pj.y)); // 中点
+    let r = Point::new(-(pj.y - pi.y), pj.x - pi.x); // 垂直向量（旋转90度）
+
     // 第二条中垂线：边 pi-p0 的中垂线
-    let q = Point::new(0.5 * (pi.x + p0.x), 0.5 * (pi.y + p0.y));  // 中点
-    let s = Point::new(-(p0.y - pi.y), p0.x - pi.x);  // 垂直向量
+    let q = Point::new(0.5 * (pi.x + p0.x), 0.5 * (pi.y + p0.y)); // 中点
+    let s = Point::new(-(p0.y - pi.y), p0.x - pi.x); // 垂直向量
 
     // 计算两条中垂线的交点（外接圆圆心）
     match line_intersection(p, r, q, s) {
-        None => p0,  // 如果平行（理论上不应该发生），返回一个顶点
+        None => p0, // 如果平行（理论上不应该发生），返回一个顶点
         Some(center) => center,
     }
 }
@@ -152,16 +153,16 @@ fn compute_voronoi_vertex(t: &Dcel, f: &Face) -> Point {
 fn create_voronoi_vertices(t: &Dcel, v: &mut Dcel, vertex_to_face: &mut Vec<usize>) {
     for i in 0..t.faces.len() {
         let f = &t.faces[i];
-        
+
         // 跳过无效的面
         if !f.outer_component.is_valid() {
             continue;
         }
-        
+
         // 计算外接圆圆心作为 Voronoi 顶点
         let p = compute_voronoi_vertex(t, f);
         v.create_vertex(p);
-        
+
         // 记录映射关系
         vertex_to_face.push(i);
     }
@@ -189,7 +190,7 @@ fn init_vertex_edge_table(
     // 遍历每个 Delaunay 顶点
     for vidx in 0..t.vertices.len() {
         let dv = t.vertices[vidx];
-        
+
         // 跳过边界顶点
         if t.is_boundary_vertex_check(dv) {
             continue;
@@ -201,11 +202,17 @@ fn init_vertex_edge_table(
         // 为每对相邻的三角形创建一条 Voronoi 边
         for fidx in 0..incident_faces.len() {
             let fi = &incident_faces[fidx];
-            let fj = if fidx == 0 { incident_faces.last().unwrap() } else { &incident_faces[fidx - 1] };
+            let fj = if fidx == 0 {
+                incident_faces.last().unwrap()
+            } else {
+                &incident_faces[fidx - 1]
+            };
 
             let refi = delaunay_face_to_vertex[fi.id.id as usize];
             let refj = delaunay_face_to_vertex[fj.id.id as usize];
-            if refi < 0 || refj < 0 { continue; }
+            if refi < 0 || refj < 0 {
+                continue;
+            }
             let refi = refi as usize;
             let refj = refj as usize;
 
@@ -232,8 +239,10 @@ fn init_vertex_edge_table(
 /// - 原始 C++ 实现: src/voronoi.cpp, initVertexIncidentEdges()
 fn init_vertex_incident_edges(v: &mut Dcel, vertex_edges: &Vec<Vec<(usize, usize)>>) {
     for i in 0..vertex_edges.len() {
-        if vertex_edges[i].is_empty() { continue; }
-        
+        if vertex_edges[i].is_empty() {
+            continue;
+        }
+
         // 使用第一条边作为关联边
         let edge_id = vertex_edges[i][0].1;
         let mut vi = v.vertices[i];
@@ -278,16 +287,18 @@ fn get_voronoi_cell_edge_loop(
     // 为每对相邻的三角形找到对应的 Voronoi 边
     for fidx in 0..incident_faces.len() {
         let fi = &incident_faces[fidx];
-        let fj = if fidx == 0 { 
-            incident_faces.last().unwrap() 
-        } else { 
-            &incident_faces[fidx - 1] 
+        let fj = if fidx == 0 {
+            incident_faces.last().unwrap()
+        } else {
+            &incident_faces[fidx - 1]
         };
 
         // 获取对应的 Voronoi 顶点索引
         let refi = delaunay_face_to_vertex[fi.id.id as usize];
         let refj = delaunay_face_to_vertex[fj.id.id as usize];
-        if refi < 0 || refj < 0 { continue; }
+        if refi < 0 || refj < 0 {
+            continue;
+        }
         let refi = refi as usize;
         let refj = refj as usize;
 
@@ -329,7 +340,9 @@ fn init_voronoi_face_from_edge_loop(
     v: &mut Dcel,
     vertex_edges: &mut Vec<Vec<(usize, usize)>>,
 ) {
-    if edge_loop.is_empty() { return; }
+    if edge_loop.is_empty() {
+        return;
+    }
 
     // 创建新的 Voronoi 单元（面）
     let mut cell_face = v.create_face();
@@ -337,30 +350,36 @@ fn init_voronoi_face_from_edge_loop(
     v.update_face(cell_face);
 
     let n = edge_loop.len();
-    
+
     // 连接边环中的所有边
     for hidx in 0..n {
         let eij = edge_loop[hidx];
-        
+
         // 前一条边（逆时针方向）
-        let ejk = if hidx == 0 { 
-            *edge_loop.last().unwrap() 
-        } else { 
-            edge_loop[hidx - 1] 
+        let ejk = if hidx == 0 {
+            *edge_loop.last().unwrap()
+        } else {
+            edge_loop[hidx - 1]
         };
-        
+
         // 后一条边（逆时针方向）
-        let eri = if hidx == n - 1 { 
-            edge_loop[0] 
-        } else { 
-            edge_loop[hidx + 1] 
+        let eri = if hidx == n - 1 {
+            edge_loop[0]
+        } else {
+            edge_loop[hidx + 1]
         };
 
         let vi = v.origin(eij);
         let vj = v.origin(ejk);
 
         // 找到或创建孪生边 eji（从 vj 到 vi）
-        let eji = find_or_create_twin(v, vertex_edges, vj.id.id as usize, vi.id.id as usize, eij.id);
+        let eji = find_or_create_twin(
+            v,
+            vertex_edges,
+            vj.id.id as usize,
+            vi.id.id as usize,
+            eij.id,
+        );
 
         // 更新边的所有字段
         let mut eij2 = eij;

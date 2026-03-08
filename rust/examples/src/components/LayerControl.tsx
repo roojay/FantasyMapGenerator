@@ -1,4 +1,4 @@
-import { Box, Checkbox, Group } from "@mantine/core";
+import { Box, Checkbox } from "@mantine/core";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
@@ -6,10 +6,12 @@ import type { MapLayers } from "@/types/map";
 
 interface LayerControlProps {
   layers: MapLayers;
+  satelliteStyle: boolean;
   onLayerChange: <Key extends keyof MapLayers>(key: Key, value: MapLayers[Key]) => void;
+  onSatelliteStyleChange: (enabled: boolean) => void;
 }
 
-export function LayerControl({ layers, onLayerChange }: LayerControlProps) {
+export function LayerControl({ layers, satelliteStyle, onLayerChange, onSatelliteStyleChange }: LayerControlProps) {
   const { t } = useTranslation();
 
   const layerKeys = Object.keys(layers) as Array<keyof MapLayers>;
@@ -51,12 +53,56 @@ export function LayerControl({ layers, onLayerChange }: LayerControlProps) {
         {/* Desktop: single row - hidden on mobile */}
         <Box className="hidden sm:grid sm:auto-cols-max sm:grid-flow-col sm:items-center sm:justify-center sm:gap-4">
           {layerKeys.map(renderCheckbox)}
+          
+          {/* 分隔线 */}
+          <Box
+            className="h-4 w-px shrink-0"
+            style={{ backgroundColor: "rgba(var(--app-border), 0.6)" }}
+          />
+          
+          {/* 卫星风格开关 */}
+          <Checkbox
+            size="xs"
+            label={t("layers.satellite")}
+            checked={satelliteStyle}
+            onChange={(event) => onSatelliteStyleChange(event.currentTarget.checked)}
+            classNames={{
+              root: cn(
+                "rounded-md px-1.5 py-1 -mx-1.5 -my-1 cursor-pointer",
+                "hover:bg-[rgba(var(--app-accent),0.08)] dark:hover:bg-[rgba(var(--app-accent),0.12)]",
+                "transition-colors duration-200"
+              ),
+              label: cn(
+                "cursor-pointer select-none text-xs font-semibold",
+                "whitespace-nowrap"
+              ),
+              input: "cursor-pointer"
+            }}
+          />
         </Box>
 
         {/* Mobile: grid layout - hidden on desktop */}
         <Box className="block sm:hidden">
           <Box className="grid grid-cols-2 gap-x-4 gap-y-2">
             {layerKeys.map(renderCheckbox)}
+            <Checkbox
+              size="xs"
+              label={t("layers.satellite")}
+              checked={satelliteStyle}
+              onChange={(event) => onSatelliteStyleChange(event.currentTarget.checked)}
+              classNames={{
+                root: cn(
+                  "rounded-md px-1.5 py-1 -mx-1.5 -my-1 cursor-pointer",
+                  "hover:bg-[rgba(var(--app-accent),0.08)] dark:hover:bg-[rgba(var(--app-accent),0.12)]",
+                  "transition-colors duration-200"
+                ),
+                label: cn(
+                  "cursor-pointer select-none text-xs font-semibold",
+                  "whitespace-nowrap"
+                ),
+                input: "cursor-pointer"
+              }}
+            />
           </Box>
         </Box>
       </Box>

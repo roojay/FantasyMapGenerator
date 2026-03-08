@@ -60,23 +60,74 @@
     unused_variables
 )]
 
-use std::collections::VecDeque;
 use serde_json::{json, Value};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, VecDeque};
 
+use crate::algorithms::delaunay;
+use crate::algorithms::poisson_disc;
+use crate::algorithms::voronoi;
 use crate::data_structures::dcel::{Dcel, Face, HalfEdge, Point, Ref, Vertex};
 use crate::data_structures::extents2d::Extents2d;
-use crate::utils::rand::GlibcRand;
-use crate::data_structures::vertex_map::VertexMap;
 use crate::data_structures::node_map::NodeMap;
-use crate::utils::font_face::{FontFace, TextExtents};
 use crate::data_structures::spatial_point_grid::SpatialPointGrid;
-use crate::algorithms::poisson_disc;
-use crate::algorithms::delaunay;
-use crate::algorithms::voronoi;
+use crate::data_structures::vertex_map::VertexMap;
+use crate::utils::font_face::{FontFace, TextExtents};
+use crate::utils::rand::GlibcRand;
 
-/// 城市数据
+/// 地图导出选项
 ///
-/// 存储城市的名称、位置、领土信息和移动成本图。
+/// 控制 `get_draw_data_with_options()` 在导出 JSON 时是否附带附加栅格数据。
+/// 这些栅格数据主要服务于本 fork 的浏览器卫星风格渲染，
+/// 原始 C++ 版本的 `getDrawData()` 只导出矢量绘制数据。
+///
+/// # 字段说明
+/// - `include_raster_data`: 是否导出 heightmap / flux_map / land_mask
+///
+/// # 使用场景
+/// - CLI 或调试场景：通常保留完整导出
+/// - Web 普通渲染路径：只需要矢量数据，可关闭以减少 WASM 到 JS 的数据传输
+/// - 卫星风格渲染：需要开启以提供地形栅格输入
+///
+/// # 参考来源
+/// - 原始 C++ 实现: src/mapgenerator.h, getDrawData()
+#[derive(Clone, Copy, Debug)]
+pub struct MapExportOptions {
+    pub include_raster_data: bool,
+}
+
+impl Default for MapExportOptions {
+    fn default() -> Self {
+        Self {
+            include_raster_data: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FloodNode {
+    height: f64,
+    index: usize,
+}
+
+impl Eq for FloodNode {}
+
+impl Ord for FloodNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering so BinaryHeap behaves as a min-heap on height.
+        other
+            .height
+            .total_cmp(&self.height)
+            .then_with(|| other.index.cmp(&self.index))
+    }
+}
+
+impl PartialOrd for FloodNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct City {
     /// 城市名称
@@ -235,6 +286,7 @@ pub struct MapGenerator {
     neighbour_map: Vec<Vec<usize>>,
     face_neighbours: Vec<Vec<usize>>,
     face_vertices: Vec<Vec<usize>>,
+    face_positions: Vec<Point>,
     face_edges: Vec<usize>, // not really used by index, store edge ids per face
     face_edge_lists: Vec<Vec<usize>>,
 
@@ -356,7 +408,13 @@ impl MapGenerator {
     ///
     /// # 参考来源
     /// - 原始 C++ 实现: src/mapgenerator.cpp, MapGenerator 构造函数
-    pub fn new(extents: Extents2d, resolution: f64, img_width: u32, img_height: u32, rng: GlibcRand) -> Self {
+    pub fn new(
+        extents: Extents2d,
+        resolution: f64,
+        img_width: u32,
+        img_height: u32,
+        rng: GlibcRand,
+    ) -> Self {
         let font_data_str = include_str!("fontdata/fontdata.json");
         let font_data = FontFace::new(font_data_str);
         MapGenerator {
@@ -369,6 +427,7 @@ impl MapGenerator {
             neighbour_map: Vec::new(),
             face_neighbours: Vec::new(),
             face_vertices: Vec::new(),
+            face_positions: Vec::new(),
             face_edges: Vec::new(),
             face_edge_lists: Vec::new(),
             height_map: NodeMap::new(0),
@@ -486,21 +545,37 @@ impl MapGenerator {
 
     // 特性开关方法
     /// 禁用坡度阴影
-    pub fn disable_slopes(&mut self) { self.slopes_enabled = false; }
+    pub fn disable_slopes(&mut self) {
+        self.slopes_enabled = false;
+    }
     /// 禁用河流
-    pub fn disable_rivers(&mut self) { self.rivers_enabled = false; }
+    pub fn disable_rivers(&mut self) {
+        self.rivers_enabled = false;
+    }
     /// 禁用等高线
-    pub fn disable_contour(&mut self) { self.contour_enabled = false; }
+    pub fn disable_contour(&mut self) {
+        self.contour_enabled = false;
+    }
     /// 禁用领土边界
-    pub fn disable_borders(&mut self) { self.borders_enabled = false; }
+    pub fn disable_borders(&mut self) {
+        self.borders_enabled = false;
+    }
     /// 禁用城市标记
-    pub fn disable_cities(&mut self) { self.cities_enabled = false; }
+    pub fn disable_cities(&mut self) {
+        self.cities_enabled = false;
+    }
     /// 禁用城镇标记
-    pub fn disable_towns(&mut self) { self.towns_enabled = false; }
+    pub fn disable_towns(&mut self) {
+        self.towns_enabled = false;
+    }
     /// 禁用所有标签
-    pub fn disable_labels(&mut self) { self.labels_enabled = false; }
+    pub fn disable_labels(&mut self) {
+        self.labels_enabled = false;
+    }
     /// 禁用区域标签
-    pub fn disable_area_labels(&mut self) { self.area_labels_enabled = false; }
+    pub fn disable_area_labels(&mut self) {
+        self.area_labels_enabled = false;
+    }
 
     /// 初始化地图生成器
     ///
@@ -523,10 +598,17 @@ impl MapGenerator {
     fn init_voronoi_data(&mut self) {
         let pad = self.sample_pad_factor * self.resolution;
         let sample_extents = Extents2d::new(
-            self.extents.minx - pad, self.extents.miny - pad,
-            self.extents.maxx + pad, self.extents.maxy + pad,
+            self.extents.minx - pad,
+            self.extents.miny - pad,
+            self.extents.maxx + pad,
+            self.extents.maxy + pad,
         );
-        let mut samples = poisson_disc::generate_samples(&mut self.rng, sample_extents, self.resolution, self.poisson_k);
+        let mut samples = poisson_disc::generate_samples(
+            &mut self.rng,
+            sample_extents,
+            self.resolution,
+            self.poisson_k,
+        );
         let triangulation = delaunay::triangulate(&mut samples);
         self.voronoi = voronoi::delaunay_to_voronoi(&triangulation);
     }
@@ -550,6 +632,7 @@ impl MapGenerator {
         let nf = self.voronoi.faces.len();
         self.face_neighbours = Vec::with_capacity(nf);
         self.face_vertices = Vec::with_capacity(nf);
+        self.face_positions = Vec::with_capacity(nf);
         self.face_edge_lists = Vec::with_capacity(nf);
 
         for i in 0..nf {
@@ -558,6 +641,7 @@ impl MapGenerator {
             if !f.outer_component.is_valid() {
                 self.face_neighbours.push(Vec::new());
                 self.face_vertices.push(Vec::new());
+                self.face_positions.push(Point::new(0.0, 0.0));
                 self.face_edge_lists.push(Vec::new());
                 continue;
             }
@@ -574,10 +658,13 @@ impl MapGenerator {
             self.face_neighbours.push(nbs);
 
             // vertices
-            let verts: Vec<usize> = edges.iter()
+            let verts: Vec<usize> = edges
+                .iter()
                 .map(|e| self.voronoi.origin(*e).id.id as usize)
                 .collect();
+            let face_position = self.compute_face_position_from_vertices(&verts);
             self.face_vertices.push(verts);
+            self.face_positions.push(face_position);
 
             // edges
             let eids: Vec<usize> = edges.iter().map(|e| e.id.id as usize).collect();
@@ -814,40 +901,58 @@ impl MapGenerator {
     ///   to fill the depressions of digital elevation models", CATENA, 2002
     /// - 原始 C++ 实现: src/mapgenerator.cpp, fillDepressions()
     fn fill_depressions(&mut self) {
-        let max_h = self.height_map.max_val();
+        // PERF: 原始 C++ / 早期 Rust 版本采用“反复全图扫描直到收敛”的实现，
+        // 在浏览器生成大地图时这里是最主要的耗时热点。
+        //
+        // 这里改为 priority-flood 风格的最小堆传播：
+        // 1. 边界点作为初始前沿，保持原始高度
+        // 2. 始终从当前最低的已确定点向外扩张
+        // 3. 邻点高度被抬升到 max(原始高度, 当前点 + eps)
+        //
+        // 这样仍然满足“每个点都有一条非上升路径通向边界”的目标，
+        // 但避免了对整张图做多轮无差别扫描，维护时如需回退到原版行为，
+        // 可以对照 src/mapgenerator.cpp::_fillDepressions()。
         let n = self.vertex_map.size();
-        let mut final_hm = NodeMap::new_filled(n, max_h);
+        let mut final_hm = NodeMap::new_filled(n, f64::INFINITY);
+        let mut frontier = BinaryHeap::new();
 
         for i in 0..self.vertex_map.edge.len() {
             let v = self.vertex_map.edge[i];
             let idx = self.vertex_map.get_vertex_index(v) as usize;
             let hval = *self.height_map.get(idx);
             final_hm.set(idx, hval);
+            frontier.push(FloodNode {
+                height: hval,
+                index: idx,
+            });
         }
 
         let eps = 1e-5;
-        loop {
-            let mut updated = false;
-            for i in 0..n {
-                let h = *self.height_map.get(i);
-                let fh = *final_hm.get(i);
-                if h == fh { continue; }
-                for &nb in &self.neighbour_map[i] {
-                    let nval = *final_hm.get(nb);
-                    if h >= nval + eps {
-                        final_hm.set(i, h);
-                        updated = true;
-                        break;
-                    }
-                    let hval = nval + eps;
-                    if fh > hval && hval > h {
-                        final_hm.set(i, hval);
-                        updated = true;
-                    }
+        while let Some(node) = frontier.pop() {
+            let current_height = *final_hm.get(node.index);
+            if node.height > current_height + eps {
+                continue;
+            }
+
+            for &nb in &self.neighbour_map[node.index] {
+                let original_height = *self.height_map.get(nb);
+                let candidate_height = original_height.max(node.height + eps);
+                if candidate_height + eps < *final_hm.get(nb) {
+                    final_hm.set(nb, candidate_height);
+                    frontier.push(FloodNode {
+                        height: candidate_height,
+                        index: nb,
+                    });
                 }
             }
-            if !updated { break; }
         }
+
+        for i in 0..n {
+            if !final_hm.get(i).is_finite() {
+                final_hm.set(i, *self.height_map.get(i));
+            }
+        }
+
         self.height_map = final_hm;
     }
 
@@ -961,14 +1066,18 @@ impl MapGenerator {
 
     fn calculate_slope(&self, i: usize) -> f64 {
         let v = self.vertex_map.vertices[i];
-        if !self.vertex_map.is_interior_vertex(v) { return 0.0; }
+        if !self.vertex_map.is_interior_vertex(v) {
+            return 0.0;
+        }
         let (nx, ny, _) = self.calculate_vertex_normal(i);
         (nx * nx + ny * ny).sqrt()
     }
 
     fn calculate_vertex_normal(&self, vidx: usize) -> (f64, f64, f64) {
         let nbs = &self.neighbour_map[vidx];
-        if nbs.len() < 3 { return (0.0, 0.0, 1.0); }
+        if nbs.len() < 3 {
+            return (0.0, 0.0, 1.0);
+        }
         let p0 = self.vertex_map.vertices[nbs[0]].position;
         let p1 = self.vertex_map.vertices[nbs[1]].position;
         let p2 = self.vertex_map.vertices[nbs[2]].position;
@@ -982,7 +1091,9 @@ impl MapGenerator {
         let vny = v0z * v1x - v0x * v1z;
         let vnz = v0x * v1y - v0y * v1x;
         let len = (vnx * vnx + vny * vny + vnz * vnz).sqrt();
-        if len < 1e-12 { return (0.0, 0.0, 1.0); }
+        if len < 1e-12 {
+            return (0.0, 0.0, 1.0);
+        }
         (vnx / len, vny / len, vnz / len)
     }
 
@@ -1000,7 +1111,9 @@ impl MapGenerator {
             for &vid in verts {
                 let v = if vid < self.voronoi.vertices.len() {
                     self.voronoi.vertices[vid]
-                } else { continue; };
+                } else {
+                    continue;
+                };
                 let idx = self.vertex_map.get_vertex_index(v);
                 if idx >= 0 {
                     sum += node_map.get(idx as usize);
@@ -1013,17 +1126,20 @@ impl MapGenerator {
     }
 
     fn compute_face_positions(&self) -> Vec<Point> {
-        let nf = self.voronoi.faces.len();
-        let mut result = Vec::with_capacity(nf);
-        for j in 0..nf {
-            result.push(self.compute_face_position(j));
-        }
-        result
+        self.face_positions.clone()
     }
 
     fn compute_face_position(&self, fidx: usize) -> Point {
-        let verts = &self.face_vertices[fidx];
-        if verts.is_empty() { return Point::new(0.0, 0.0); }
+        self.face_positions
+            .get(fidx)
+            .copied()
+            .unwrap_or_else(|| Point::new(0.0, 0.0))
+    }
+
+    fn compute_face_position_from_vertices(&self, verts: &[usize]) -> Point {
+        if verts.is_empty() {
+            return Point::new(0.0, 0.0);
+        }
         let mut sx = 0.0;
         let mut sy = 0.0;
         let mut cnt = 0;
@@ -1035,7 +1151,11 @@ impl MapGenerator {
                 cnt += 1;
             }
         }
-        if cnt > 0 { Point::new(sx / cnt as f64, sy / cnt as f64) } else { Point::new(0.0, 0.0) }
+        if cnt > 0 {
+            Point::new(sx / cnt as f64, sy / cnt as f64)
+        } else {
+            Point::new(0.0, 0.0)
+        }
     }
 
     fn is_edge_in_map(&self, h: HalfEdge) -> bool {
@@ -1073,20 +1193,30 @@ impl MapGenerator {
         let mut processed = vec![false; nf];
         let mut islands: Vec<Vec<usize>> = Vec::new();
         for i in 0..nf {
-            if processed[i] { continue; }
+            if processed[i] {
+                continue;
+            }
             let mut connected = Vec::new();
             self.get_connected_faces(i, is_land, &mut processed, &mut connected);
             islands.push(connected);
         }
         for island in &islands {
-            if island.len() >= self.min_island_face_threshold { continue; }
+            if island.len() >= self.min_island_face_threshold {
+                continue;
+            }
             for &fidx in island {
                 is_land[fidx] = !is_land[fidx];
             }
         }
     }
 
-    fn get_connected_faces(&self, seed: usize, is_land: &[bool], processed: &mut Vec<bool>, faces: &mut Vec<usize>) {
+    fn get_connected_faces(
+        &self,
+        seed: usize,
+        is_land: &[bool],
+        processed: &mut Vec<bool>,
+        faces: &mut Vec<usize>,
+    ) {
         let mut queue = vec![seed];
         processed[seed] = true;
         while let Some(fidx) = queue.pop() {
@@ -1104,14 +1234,18 @@ impl MapGenerator {
     fn is_contour_edge(&mut self, h: HalfEdge) -> bool {
         let f1 = self.voronoi.incident_face(h);
         let f2 = self.voronoi.incident_face(self.voronoi.twin(h));
-        if !f1.id.is_valid() || !f2.id.is_valid() { return false; }
+        if !f1.id.is_valid() || !f2.id.is_valid() {
+            return false;
+        }
         let land1 = self.is_land_face(f1.id.id as usize);
         let land2 = self.is_land_face(f2.id.id as usize);
         (land1 && !land2) || (!land1 && land2)
     }
 
     fn is_contour_edge_between(&mut self, v1_id: i32, v2_id: i32) -> bool {
-        if v1_id < 0 || v1_id as usize >= self.voronoi.vertices.len() { return false; }
+        if v1_id < 0 || v1_id as usize >= self.voronoi.vertices.len() {
+            return false;
+        }
         let v1 = self.voronoi.vertices[v1_id as usize];
         let edges = self.voronoi.get_incident_edges(v1);
         for h in edges {
@@ -1125,24 +1259,33 @@ impl MapGenerator {
     }
 
     fn is_land_vertex(&mut self, vidx: usize) -> bool {
-        if vidx >= self.vertex_map.vertices.len() { return false; }
+        if vidx >= self.vertex_map.vertices.len() {
+            return false;
+        }
         let v = self.vertex_map.vertices[vidx];
         let faces = self.voronoi.get_incident_faces(v);
         for f in &faces {
-            if self.is_land_face(f.id.id as usize) { return true; }
+            if self.is_land_face(f.id.id as usize) {
+                return true;
+            }
         }
         false
     }
 
     fn is_coast_vertex(&mut self, vidx: usize) -> bool {
-        if vidx >= self.vertex_map.vertices.len() { return false; }
+        if vidx >= self.vertex_map.vertices.len() {
+            return false;
+        }
         let v = self.vertex_map.vertices[vidx];
         let faces = self.voronoi.get_incident_faces(v);
         let mut has_land = false;
         let mut has_sea = false;
         for f in &faces {
-            if self.is_land_face(f.id.id as usize) { has_land = true; }
-            else { has_sea = true; }
+            if self.is_land_face(f.id.id as usize) {
+                has_land = true;
+            } else {
+                has_sea = true;
+            }
         }
         has_land && has_sea
     }
@@ -1152,15 +1295,18 @@ impl MapGenerator {
         let paths = self.get_contour_paths();
         let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
         let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
-        paths.iter().map(|path| {
-            let mut out = Vec::with_capacity(path.len() * 2);
-            for &vidx in path {
-                let v = self.vertex_map.vertices[vidx];
-                out.push((v.position.x - self.extents.minx) * inv_w);
-                out.push((v.position.y - self.extents.miny) * inv_h);
-            }
-            out
-        }).collect()
+        paths
+            .iter()
+            .map(|path| {
+                let mut out = Vec::with_capacity(path.len() * 2);
+                for &vidx in path {
+                    let v = self.vertex_map.vertices[vidx];
+                    out.push((v.position.x - self.extents.minx) * inv_w);
+                    out.push((v.position.y - self.extents.miny) * inv_h);
+                }
+                out
+            })
+            .collect()
     }
 
     fn get_contour_paths(&mut self) -> Vec<Vec<usize>> {
@@ -1170,10 +1316,18 @@ impl MapGenerator {
 
         for i in 0..self.voronoi.edges.len() {
             let h = self.voronoi.edges[i];
-            if h.id.id as usize != i { continue; }
-            if edge_visited[i] { continue; }
-            if !self.is_edge_in_map(h) { continue; }
-            if !self.is_contour_edge(h) { continue; }
+            if h.id.id as usize != i {
+                continue;
+            }
+            if edge_visited[i] {
+                continue;
+            }
+            if !self.is_edge_in_map(h) {
+                continue;
+            }
+            if !self.is_contour_edge(h) {
+                continue;
+            }
             let v1 = self.voronoi.origin(h);
             let v2 = self.voronoi.origin(self.voronoi.twin(h));
             let idx1 = self.vertex_map.get_vertex_index(v1);
@@ -1205,20 +1359,32 @@ impl MapGenerator {
         // Start from end vertices first
         for i in 0..n {
             if is_end_vertex[i] && !in_contour[i] {
-                let path = self.get_contour_path(i, &is_contour_vertex, &is_end_vertex, &mut in_contour);
-                if !path.is_empty() { paths.push(path); }
+                let path =
+                    self.get_contour_path(i, &is_contour_vertex, &is_end_vertex, &mut in_contour);
+                if !path.is_empty() {
+                    paths.push(path);
+                }
             }
         }
         for i in 0..n {
             if is_contour_vertex[i] && !in_contour[i] {
-                let path = self.get_contour_path(i, &is_contour_vertex, &is_end_vertex, &mut in_contour);
-                if !path.is_empty() { paths.push(path); }
+                let path =
+                    self.get_contour_path(i, &is_contour_vertex, &is_end_vertex, &mut in_contour);
+                if !path.is_empty() {
+                    paths.push(path);
+                }
             }
         }
         paths
     }
 
-    fn get_contour_path(&mut self, seed: usize, is_contour: &[bool], is_end: &[bool], in_contour: &mut Vec<bool>) -> Vec<usize> {
+    fn get_contour_path(
+        &mut self,
+        seed: usize,
+        is_contour: &[bool],
+        is_end: &[bool],
+        in_contour: &mut Vec<bool>,
+    ) -> Vec<usize> {
         let mut path = Vec::new();
         let mut v_idx = seed;
         let mut last_idx = usize::MAX;
@@ -1230,14 +1396,19 @@ impl MapGenerator {
             let nbs = self.neighbour_map[v_idx].clone();
             let mut found = false;
             for &nb in &nbs {
-                if nb != last_idx && is_contour[nb] && self.is_contour_edge_between(v.id.id, self.vertex_map.vertices[nb].id.id) {
+                if nb != last_idx
+                    && is_contour[nb]
+                    && self.is_contour_edge_between(v.id.id, self.vertex_map.vertices[nb].id.id)
+                {
                     last_idx = v_idx;
                     v_idx = nb;
                     found = true;
                     break;
                 }
             }
-            if !found { break; }
+            if !found {
+                break;
+            }
             if is_end[v_idx] || in_contour[v_idx] {
                 path.push(v_idx);
                 in_contour[v_idx] = true;
@@ -1253,22 +1424,28 @@ impl MapGenerator {
         let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
         let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
         let factor = self.river_smoothing_factor;
-        paths.iter().map(|path| {
-            let raw: Vec<(f64, f64)> = path.iter().map(|&vidx| {
-                let v = self.vertex_map.vertices[vidx];
-                (
-                    (v.position.x - self.extents.minx) * inv_w,
-                    (v.position.y - self.extents.miny) * inv_h,
-                )
-            }).collect();
-            let smooth = smooth_positions(raw, factor);
-            let mut out = Vec::with_capacity(smooth.len() * 2);
-            for (x, y) in smooth {
-                out.push(x);
-                out.push(y);
-            }
-            out
-        }).collect()
+        paths
+            .iter()
+            .map(|path| {
+                let raw: Vec<(f64, f64)> = path
+                    .iter()
+                    .map(|&vidx| {
+                        let v = self.vertex_map.vertices[vidx];
+                        (
+                            (v.position.x - self.extents.minx) * inv_w,
+                            (v.position.y - self.extents.miny) * inv_h,
+                        )
+                    })
+                    .collect();
+                let smooth = smooth_positions(raw, factor);
+                let mut out = Vec::with_capacity(smooth.len() * 2);
+                for (x, y) in smooth {
+                    out.push(x);
+                    out.push(y);
+                }
+                out
+            })
+            .collect()
     }
 
     fn get_river_paths(&mut self) -> Vec<Vec<usize>> {
@@ -1286,8 +1463,13 @@ impl MapGenerator {
             while next != -1 {
                 let ni = next as usize;
                 path_verts.push(ni);
-                if self.is_coast_vertex(ni) { break; }
-                if !self.is_land_vertex(ni) { path_verts.clear(); break; }
+                if self.is_coast_vertex(ni) {
+                    break;
+                }
+                if !self.is_land_vertex(ni) {
+                    path_verts.clear();
+                    break;
+                }
                 next = *self.flow_map.get(ni);
             }
             for &pv in &path_verts {
@@ -1300,9 +1482,15 @@ impl MapGenerator {
         let mut edge_processed = vec![false; self.voronoi.edges.len()];
         for i in 0..self.voronoi.edges.len() {
             let h = self.voronoi.edges[i];
-            if h.id.id as usize != i { continue; }
-            if edge_processed[i] { continue; }
-            if !self.is_edge_in_map(h) { continue; }
+            if h.id.id as usize != i {
+                continue;
+            }
+            if edge_processed[i] {
+                continue;
+            }
+            if !self.is_edge_in_map(h) {
+                continue;
+            }
             let v1 = self.voronoi.origin(h);
             let v2 = self.voronoi.origin(self.voronoi.twin(h));
             let idx1 = self.vertex_map.get_vertex_index(v1);
@@ -1316,7 +1504,9 @@ impl MapGenerator {
                 }
             }
             edge_processed[i] = true;
-            if h.twin.is_valid() { edge_processed[h.twin.id as usize] = true; }
+            if h.twin.is_valid() {
+                edge_processed[h.twin.id as usize] = true;
+            }
         }
 
         let mut is_fixed = vec![false; n];
@@ -1328,15 +1518,21 @@ impl MapGenerator {
 
         let mut paths = Vec::new();
         for i in 0..n {
-            if !is_fixed[i] { continue; }
+            if !is_fixed[i] {
+                continue;
+            }
             let mut path = Vec::new();
             let mut next = i as i32;
             while next != -1 {
                 let ni = next as usize;
-                if !is_river_vertex.get(ni).copied().unwrap_or(false) { break; }
+                if !is_river_vertex.get(ni).copied().unwrap_or(false) {
+                    break;
+                }
                 path.push(ni);
                 next = *self.flow_map.get(ni);
-                if next == -1 { break; }
+                if next == -1 {
+                    break;
+                }
                 if is_fixed.get(next as usize).copied().unwrap_or(false) {
                     path.push(next as usize);
                     break;
@@ -1355,7 +1551,9 @@ impl MapGenerator {
         let mut v_slope = NodeMap::new_filled(self.vertex_map.size(), 0.0);
         for i in 0..self.vertex_map.size() {
             let v = self.vertex_map.vertices[i];
-            if !self.vertex_map.is_interior_vertex(v) { continue; }
+            if !self.vertex_map.is_interior_vertex(v) {
+                continue;
+            }
             let (nx, ny, _) = self.calculate_vertex_normal(i);
             h_slope.set(i, nx);
             v_slope.set(i, ny);
@@ -1371,10 +1569,14 @@ impl MapGenerator {
 
         for i in 0..self.voronoi.faces.len() {
             let slope = face_slopes[i];
-            if !self.is_land_face(i) || slope.abs() < self.min_slope_threshold { continue; }
+            if !self.is_land_face(i) || slope.abs() < self.min_slope_threshold {
+                continue;
+            }
 
-            let factor = ((slope.abs() - self.min_slope) / (self.max_slope - self.min_slope)).clamp(0.0, 1.0);
-            let angle = self.min_slope_angle + factor * (self.max_slope_angle - self.min_slope_angle);
+            let factor = ((slope.abs() - self.min_slope) / (self.max_slope - self.min_slope))
+                .clamp(0.0, 1.0);
+            let angle =
+                self.min_slope_angle + factor * (self.max_slope_angle - self.min_slope_angle);
             let angle = if slope < 0.0 { angle } else { -angle };
             let dirx = angle.cos();
             let diry = angle.sin();
@@ -1382,7 +1584,9 @@ impl MapGenerator {
             let min_len = self.min_slope_length * self.resolution;
             let max_len = self.max_slope_length * self.resolution;
             let vslope = near_slopes[i];
-            let nf = ((vslope - self.min_vertical_slope) / (self.max_vertical_slope - self.min_vertical_slope)).clamp(0.0, 1.0);
+            let nf = ((vslope - self.min_vertical_slope)
+                / (self.max_vertical_slope - self.min_vertical_slope))
+                .clamp(0.0, 1.0);
             let length = min_len + nf * (max_len - min_len);
 
             let p1 = face_positions[i];
@@ -1577,7 +1781,9 @@ impl MapGenerator {
         let face_flux = self.compute_face_values(&self.flux_map.clone());
         let face_positions = self.compute_face_positions();
         let nf = self.voronoi.faces.len();
-        let is_in_map: Vec<bool> = (0..nf).map(|i| self.extents.contains_point(face_positions[i])).collect();
+        let is_in_map: Vec<bool> = (0..nf)
+            .map(|i| self.extents.contains_point(face_positions[i]))
+            .collect();
 
         let inf = f64::INFINITY;
         let mut costs = vec![inf; nf];
@@ -1593,7 +1799,9 @@ impl MapGenerator {
 
         while let Some(fidx) = queue.pop_front() {
             for &nidx in &self.face_neighbours[fidx].clone() {
-                if !is_in_map[nidx] || costs[nidx] != inf { continue; }
+                if !is_in_map[nidx] || costs[nidx] != inf {
+                    continue;
+                }
                 let hdist = point_distance(face_positions[nidx], face_positions[fidx]);
                 let hcost = if nidx < land_table.len() && land_table[nidx] {
                     self.land_distance_cost
@@ -1603,7 +1811,11 @@ impl MapGenerator {
                 let mut cost = hcost * hdist;
                 if nidx < land_table.len() && land_table[nidx] {
                     let udist = face_heights[nidx] - face_heights[fidx];
-                    let ucost = if udist > 0.0 { self.uphill_cost } else { self.downhill_cost };
+                    let ucost = if udist > 0.0 {
+                        self.uphill_cost
+                    } else {
+                        self.downhill_cost
+                    };
                     let slope = udist / hdist.max(1e-12);
                     cost += slope * slope * ucost;
                     cost += face_flux[nidx].sqrt() * self.flux_cost;
@@ -1617,27 +1829,35 @@ impl MapGenerator {
 
     // ----- territory borders -----
     fn get_territory_draw_data(&mut self) -> Vec<Vec<f64>> {
-        if self.cities.is_empty() { return Vec::new(); }
+        if self.cities.is_empty() {
+            return Vec::new();
+        }
         let borders = self.get_territory_borders();
         let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
         let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
         let factor = 0.5f64;
-        borders.iter().map(|path| {
-            let raw: Vec<(f64, f64)> = path.iter().map(|&vidx| {
-                let v = self.vertex_map.vertices[vidx];
-                (
-                    (v.position.x - self.extents.minx) * inv_w,
-                    (v.position.y - self.extents.miny) * inv_h,
-                )
-            }).collect();
-            let smooth = smooth_positions(raw, factor);
-            let mut out = Vec::with_capacity(smooth.len() * 2);
-            for (x, y) in smooth {
-                out.push(x);
-                out.push(y);
-            }
-            out
-        }).collect()
+        borders
+            .iter()
+            .map(|path| {
+                let raw: Vec<(f64, f64)> = path
+                    .iter()
+                    .map(|&vidx| {
+                        let v = self.vertex_map.vertices[vidx];
+                        (
+                            (v.position.x - self.extents.minx) * inv_w,
+                            (v.position.y - self.extents.miny) * inv_h,
+                        )
+                    })
+                    .collect();
+                let smooth = smooth_positions(raw, factor);
+                let mut out = Vec::with_capacity(smooth.len() * 2);
+                for (x, y) in smooth {
+                    out.push(x);
+                    out.push(y);
+                }
+                out
+            })
+            .collect()
     }
 
     fn get_territory_borders(&mut self) -> Vec<Vec<usize>> {
@@ -1651,10 +1871,14 @@ impl MapGenerator {
     fn get_face_territories(&mut self, face_territories: &mut Vec<i32>) {
         let face_positions = self.compute_face_positions();
         let nf = self.voronoi.faces.len();
-        let is_in_map: Vec<bool> = (0..nf).map(|i| self.extents.contains_point(face_positions[i])).collect();
+        let is_in_map: Vec<bool> = (0..nf)
+            .map(|i| self.extents.contains_point(face_positions[i]))
+            .collect();
 
         for i in 0..nf {
-            if !is_in_map[i] || !self.is_land_face(i) { continue; }
+            if !is_in_map[i] || !self.is_land_face(i) {
+                continue;
+            }
             let mut min_cost = f64::INFINITY;
             let mut min_cidx = -1i32;
             for (j, city) in self.cities.iter().enumerate() {
@@ -1672,8 +1896,12 @@ impl MapGenerator {
             let old = face_territories.clone();
             let mut counts = vec![0i32; ncities];
             for fidx in 0..nf {
-                if old[fidx] == -1 { continue; }
-                for i in 0..ncities { counts[i] = 0; }
+                if old[fidx] == -1 {
+                    continue;
+                }
+                for i in 0..ncities {
+                    counts[i] = 0;
+                }
                 for &nidx in &self.face_neighbours[fidx].clone() {
                     if old[nidx] >= 0 && (old[nidx] as usize) < ncities {
                         counts[old[nidx] as usize] += 1;
@@ -1701,7 +1929,9 @@ impl MapGenerator {
         let mut processed = vec![false; nf];
         let mut connected: Vec<Vec<usize>> = Vec::new();
         for i in 0..nf {
-            if face_territories[i] == -1 || processed[i] { continue; }
+            if face_territories[i] == -1 || processed[i] {
+                continue;
+            }
             let tid = face_territories[i];
             let mut group = Vec::new();
             let mut stack = vec![i];
@@ -1722,21 +1952,29 @@ impl MapGenerator {
         let city_faces: Vec<usize> = self.cities.iter().map(|c| c.face_id).collect();
         for group in &connected {
             let cityid = face_territories[group[0]];
-            if cityid < 0 { continue; }
+            if cityid < 0 {
+                continue;
+            }
             let cfidx = city_faces[cityid as usize];
-            if group.contains(&cfidx) { continue; }
+            if group.contains(&cfidx) {
+                continue;
+            }
             // Find the majority neighbor
             let mut nb_counts = vec![0i32; self.cities.len()];
             let group_set: std::collections::HashSet<usize> = group.iter().copied().collect();
             for &fidx in group {
                 for &nidx in &self.face_neighbours[fidx] {
-                    if group_set.contains(&nidx) { continue; }
+                    if group_set.contains(&nidx) {
+                        continue;
+                    }
                     if face_territories[nidx] >= 0 {
                         nb_counts[face_territories[nidx] as usize] += 1;
                     }
                 }
             }
-            let majority = nb_counts.iter().enumerate()
+            let majority = nb_counts
+                .iter()
+                .enumerate()
                 .max_by_key(|(_, &v)| v)
                 .map(|(i, _)| i as i32)
                 .unwrap_or(-1);
@@ -1749,14 +1987,29 @@ impl MapGenerator {
     fn is_border_edge_between_faces(&self, h: HalfEdge, face_territories: &[i32]) -> bool {
         let f1 = self.voronoi.incident_face(h);
         let f2 = self.voronoi.incident_face(self.voronoi.twin(h));
-        if !f1.id.is_valid() || !f2.id.is_valid() { return false; }
-        let c1 = face_territories.get(f1.id.id as usize).copied().unwrap_or(-1);
-        let c2 = face_territories.get(f2.id.id as usize).copied().unwrap_or(-1);
+        if !f1.id.is_valid() || !f2.id.is_valid() {
+            return false;
+        }
+        let c1 = face_territories
+            .get(f1.id.id as usize)
+            .copied()
+            .unwrap_or(-1);
+        let c2 = face_territories
+            .get(f2.id.id as usize)
+            .copied()
+            .unwrap_or(-1);
         c1 != -1 && c2 != -1 && c1 != c2
     }
 
-    fn is_border_edge_between_vertices(&self, v1_id: i32, v2_id: i32, face_territories: &[i32]) -> bool {
-        if v1_id < 0 || v1_id as usize >= self.voronoi.vertices.len() { return false; }
+    fn is_border_edge_between_vertices(
+        &self,
+        v1_id: i32,
+        v2_id: i32,
+        face_territories: &[i32],
+    ) -> bool {
+        if v1_id < 0 || v1_id as usize >= self.voronoi.vertices.len() {
+            return false;
+        }
         let v1 = self.voronoi.vertices[v1_id as usize];
         let edges = self.voronoi.get_incident_edges(v1);
         for h in edges {
@@ -1776,9 +2029,15 @@ impl MapGenerator {
 
         for i in 0..self.voronoi.edges.len() {
             let h = self.voronoi.edges[i];
-            if h.id.id as usize != i { continue; }
-            if edge_visited[i] { continue; }
-            if !self.is_edge_in_map(h) { continue; }
+            if h.id.id as usize != i {
+                continue;
+            }
+            if edge_visited[i] {
+                continue;
+            }
+            if !self.is_edge_in_map(h) {
+                continue;
+            }
             if self.is_border_edge_between_faces(h, face_territories) {
                 let v1 = self.voronoi.origin(h);
                 let v2 = self.voronoi.origin(self.voronoi.twin(h));
@@ -1789,7 +2048,9 @@ impl MapGenerator {
                     border_counts[idx2 as usize] += 1;
                 }
                 edge_visited[i] = true;
-                if h.twin.is_valid() { edge_visited[h.twin.id as usize] = true; }
+                if h.twin.is_valid() {
+                    edge_visited[h.twin.id as usize] = true;
+                }
             }
         }
 
@@ -1804,16 +2065,31 @@ impl MapGenerator {
         let mut paths = Vec::new();
 
         for i in 0..n {
-            if !is_end_vertex[i] { continue; }
+            if !is_end_vertex[i] {
+                continue;
+            }
             for _ in 0..3 {
-                let path = self.get_border_path(i, face_territories, &is_end_vertex, &mut vertex_processed);
-                if !path.is_empty() { paths.push(path); }
+                let path = self.get_border_path(
+                    i,
+                    face_territories,
+                    &is_end_vertex,
+                    &mut vertex_processed,
+                );
+                if !path.is_empty() {
+                    paths.push(path);
+                }
             }
         }
         paths
     }
 
-    fn get_border_path(&self, start: usize, face_territories: &[i32], is_end: &[bool], processed: &mut Vec<bool>) -> Vec<usize> {
+    fn get_border_path(
+        &self,
+        start: usize,
+        face_territories: &[i32],
+        is_end: &[bool],
+        processed: &mut Vec<bool>,
+    ) -> Vec<usize> {
         let mut path = Vec::new();
         let mut v_idx = start;
         let mut last_idx = usize::MAX;
@@ -1825,7 +2101,14 @@ impl MapGenerator {
             let nbs = &self.neighbour_map[v_idx];
             let mut found = false;
             for &nb in nbs {
-                if nb != last_idx && self.is_border_edge_between_vertices(v.id.id, self.vertex_map.vertices[nb].id.id, face_territories) && !processed[nb] {
+                if nb != last_idx
+                    && self.is_border_edge_between_vertices(
+                        v.id.id,
+                        self.vertex_map.vertices[nb].id.id,
+                        face_territories,
+                    )
+                    && !processed[nb]
+                {
                     last_idx = v_idx;
                     v_idx = nb;
                     found = true;
@@ -1840,7 +2123,9 @@ impl MapGenerator {
                         processed[nb] = true;
                     }
                 }
-                if path.len() < 2 { path.clear(); }
+                if path.len() < 2 {
+                    path.clear();
+                }
                 break;
             }
             if is_end[v_idx] {
@@ -1855,13 +2140,18 @@ impl MapGenerator {
     // ----- labels -----
     fn get_label_draw_data(&mut self) -> Vec<Value> {
         let mut labels = self.initialize_labels();
-        if labels.is_empty() { return Vec::new(); }
+        if labels.is_empty() {
+            return Vec::new();
+        }
         self.generate_label_placements(&mut labels);
 
-        labels.iter().map(|label| {
-            let c = &label.candidates[label.candidate_idx];
-            self.label_to_json(c, label.score)
-        }).collect()
+        labels
+            .iter()
+            .map(|label| {
+                let c = &label.candidates[label.candidate_idx];
+                self.label_to_json(c, label.score)
+            })
+            .collect()
     }
 
     fn initialize_labels(&mut self) -> Vec<Label> {
@@ -1896,7 +2186,13 @@ impl MapGenerator {
             let city = self.cities[i].clone();
             let text = city.city_name.clone();
             let pos = city.position;
-            let candidates = self.get_marker_label_candidates(&text, pos, city_r, "Times New Roman", self.city_label_font_size);
+            let candidates = self.get_marker_label_candidates(
+                &text,
+                pos,
+                city_r,
+                "Times New Roman",
+                self.city_label_font_size,
+            );
             labels.push(Label {
                 text,
                 fontface: "Times New Roman".to_string(),
@@ -1911,7 +2207,13 @@ impl MapGenerator {
             let town = self.towns[i].clone();
             let text = town.town_name.clone();
             let pos = town.position;
-            let candidates = self.get_marker_label_candidates(&text, pos, town_r, "Times New Roman", self.town_label_font_size);
+            let candidates = self.get_marker_label_candidates(
+                &text,
+                pos,
+                town_r,
+                "Times New Roman",
+                self.town_label_font_size,
+            );
             labels.push(Label {
                 text,
                 fontface: "Times New Roman".to_string(),
@@ -1946,26 +2248,42 @@ impl MapGenerator {
         labels
     }
 
-    fn get_marker_label_candidates(&self, text: &str, pos: Point, radius: f64, fontface: &str, fontsize: i32) -> Vec<LabelCandidate> {
+    fn get_marker_label_candidates(
+        &self,
+        text: &str,
+        pos: Point,
+        radius: f64,
+        fontface: &str,
+        fontsize: i32,
+    ) -> Vec<LabelCandidate> {
         let offsets = self.get_label_offsets(text, pos, radius);
-        offsets.into_iter().map(|(offset, score)| {
-            let cpos = Point::new(pos.x + offset.x, pos.y + offset.y);
-            let ext = self.get_text_extents(text, cpos);
-            let char_ext = self.get_character_extents(text, cpos);
-            LabelCandidate {
-                text: text.to_string(),
-                fontface: fontface.to_string(),
-                fontsize,
-                position: cpos,
-                extents: ext,
-                char_extents: char_ext,
-                orientation_score: score,
-                ..Default::default()
-            }
-        }).collect()
+        offsets
+            .into_iter()
+            .map(|(offset, score)| {
+                let cpos = Point::new(pos.x + offset.x, pos.y + offset.y);
+                let ext = self.get_text_extents(text, cpos);
+                let char_ext = self.get_character_extents(text, cpos);
+                LabelCandidate {
+                    text: text.to_string(),
+                    fontface: fontface.to_string(),
+                    fontsize,
+                    position: cpos,
+                    extents: ext,
+                    char_extents: char_ext,
+                    orientation_score: score,
+                    ..Default::default()
+                }
+            })
+            .collect()
     }
 
-    fn get_area_label_candidates(&self, text: &str, pos: Point, city: &City, city_id: i32) -> Vec<LabelCandidate> {
+    fn get_area_label_candidates(
+        &self,
+        text: &str,
+        pos: Point,
+        city: &City,
+        city_id: i32,
+    ) -> Vec<LabelCandidate> {
         let origin = Point::new(0.0, 0.0);
         let base_ext = self.get_text_extents(text, origin);
         let base_char = self.get_character_extents(text, origin);
@@ -1977,38 +2295,54 @@ impl MapGenerator {
         let city_id_usize = city_id as usize;
         let samples = self.get_area_label_samples(city_id_usize);
 
-        samples.into_iter().map(|p| {
-            let tx = p.x - center_x;
-            let ty = p.y - center_y;
-            let mut ext = base_ext;
-            ext.minx += tx; ext.miny += ty; ext.maxx += tx; ext.maxy += ty;
-            let char_ext: Vec<Extents2d> = base_char.iter().map(|&ce| {
-                let mut e = ce;
-                e.minx += tx; e.miny += ty; e.maxx += tx; e.maxy += ty;
-                e
-            }).collect();
-            LabelCandidate {
-                text: text.to_string(),
-                fontface: "Times New Roman".to_string(),
-                fontsize: self.area_label_font_size,
-                position: Point::new(tx, ty),
-                extents: ext,
-                char_extents: char_ext,
-                city_id,
-                ..Default::default()
-            }
-        }).collect()
+        samples
+            .into_iter()
+            .map(|p| {
+                let tx = p.x - center_x;
+                let ty = p.y - center_y;
+                let mut ext = base_ext;
+                ext.minx += tx;
+                ext.miny += ty;
+                ext.maxx += tx;
+                ext.maxy += ty;
+                let char_ext: Vec<Extents2d> = base_char
+                    .iter()
+                    .map(|&ce| {
+                        let mut e = ce;
+                        e.minx += tx;
+                        e.miny += ty;
+                        e.maxx += tx;
+                        e.maxy += ty;
+                        e
+                    })
+                    .collect();
+                LabelCandidate {
+                    text: text.to_string(),
+                    fontface: "Times New Roman".to_string(),
+                    fontsize: self.area_label_font_size,
+                    position: Point::new(tx, ty),
+                    extents: ext,
+                    char_extents: char_ext,
+                    city_id,
+                    ..Default::default()
+                }
+            })
+            .collect()
     }
 
     fn get_area_label_samples(&self, city_id: usize) -> Vec<Point> {
         // Only works after territory_data is set
-        if self.territory_data.is_empty() { return Vec::new(); }
+        if self.territory_data.is_empty() {
+            return Vec::new();
+        }
         let nf = self.voronoi.faces.len();
         let mut territory_faces: Vec<usize> = (0..nf)
             .filter(|&i| i < self.territory_data.len() && self.territory_data[i] == city_id as i32)
             .collect();
         // Use territory_data counts for all cities
-        let max_count = self.territory_data.iter()
+        let max_count = self
+            .territory_data
+            .iter()
             .filter(|&&id| id >= 0)
             .fold(std::collections::HashMap::new(), |mut acc, &id| {
                 *acc.entry(id).or_insert(0usize) += 1;
@@ -2020,11 +2354,15 @@ impl MapGenerator {
             .unwrap_or(1);
 
         let num_faces = territory_faces.len();
-        let num_samples = ((num_faces as f64 / max_count as f64) * self.num_area_label_samples as f64)
+        let num_samples = ((num_faces as f64 / max_count as f64)
+            * self.num_area_label_samples as f64)
             .min(territory_faces.len() as f64) as usize;
 
         territory_faces.truncate(num_samples);
-        territory_faces.iter().map(|&fidx| self.compute_face_position(fidx)).collect()
+        territory_faces
+            .iter()
+            .map(|&fidx| self.compute_face_position(fidx))
+            .collect()
     }
 
     fn get_label_offsets(&self, text: &str, pos: Point, r: f64) -> Vec<(Point, f64)> {
@@ -2032,34 +2370,75 @@ impl MapGenerator {
         let char_ext = self.get_character_extents(text, pos);
         let text_width = ext.maxx - ext.minx;
         let text_height = ext.maxy - ext.miny;
-        let first_h = if !char_ext.is_empty() { char_ext[0].maxy - char_ext[0].miny } else { text_height };
-        let last_h = if !char_ext.is_empty() { let l = char_ext.len()-1; char_ext[l].maxy - char_ext[l].miny } else { text_height };
+        let first_h = if !char_ext.is_empty() {
+            char_ext[0].maxy - char_ext[0].miny
+        } else {
+            text_height
+        };
+        let last_h = if !char_ext.is_empty() {
+            let l = char_ext.len() - 1;
+            char_ext[l].maxy - char_ext[l].miny
+        } else {
+            text_height
+        };
 
-        let first_ext = if !char_ext.is_empty() { &char_ext[0] } else { &ext };
-        let last_ext = if char_ext.len() > 1 { &char_ext[char_ext.len()-1] } else { &ext };
+        let first_ext = if !char_ext.is_empty() {
+            &char_ext[0]
+        } else {
+            &ext
+        };
+        let last_ext = if char_ext.len() > 1 {
+            &char_ext[char_ext.len() - 1]
+        } else {
+            &ext
+        };
         let star_ty = first_ext.miny - ext.miny;
         let end_y = last_ext.miny - ext.miny;
 
         let offsets: Vec<(Point, f64)> = vec![
-            (Point::new(1.0*r, -star_ty + 1.2*r), 0.41),
-            (Point::new(1.2*r, -star_ty + 0.9*r), 0.33),
-            (Point::new(1.4*r, -star_ty + 0.0*r), 0.00),
-            (Point::new(1.4*r, -star_ty + 0.5*r - 0.5*first_h), 0.04),
-            (Point::new(1.4*r, -star_ty - 0.5*r - 0.5*first_h), 0.30),
-            (Point::new(1.4*r, -star_ty + 0.0*r - first_h), 0.12),
-            (Point::new(1.0*r, -star_ty - 1.0*r - first_h), 0.59),
-            (Point::new(-1.2*r - text_width, -end_y + 1.0*r), 0.63),
-            (Point::new(-1.3*r - text_width, -end_y + 0.5*r), 0.44),
-            (Point::new(-1.4*r - text_width, -end_y + 0.0*r), 0.07),
-            (Point::new(-1.4*r - text_width, -end_y + 0.5*r - 0.5*last_h), 0.10),
-            (Point::new(-1.3*r - text_width, -end_y - 0.5*r - 0.5*last_h), 0.02),
-            (Point::new(-1.3*r - text_width, -end_y + 0.0*r - last_h), 0.37),
-            (Point::new(-(1.0/3.0)*text_width, 1.4*r), 0.70),
-            (Point::new(-(1.0/3.0)*text_width, -1.4*r - text_height), 0.74),
-            (Point::new(-0.5*text_width, 1.4*r), 0.67),
-            (Point::new(-0.5*text_width, -1.4*r - text_height), 0.89),
-            (Point::new(-(2.0/3.0)*text_width, -1.4*r - text_height), 0.74),
-            (Point::new(-(2.0/3.0)*text_width, -1.4*r - text_height), 1.0),
+            (Point::new(1.0 * r, -star_ty + 1.2 * r), 0.41),
+            (Point::new(1.2 * r, -star_ty + 0.9 * r), 0.33),
+            (Point::new(1.4 * r, -star_ty + 0.0 * r), 0.00),
+            (
+                Point::new(1.4 * r, -star_ty + 0.5 * r - 0.5 * first_h),
+                0.04,
+            ),
+            (
+                Point::new(1.4 * r, -star_ty - 0.5 * r - 0.5 * first_h),
+                0.30,
+            ),
+            (Point::new(1.4 * r, -star_ty + 0.0 * r - first_h), 0.12),
+            (Point::new(1.0 * r, -star_ty - 1.0 * r - first_h), 0.59),
+            (Point::new(-1.2 * r - text_width, -end_y + 1.0 * r), 0.63),
+            (Point::new(-1.3 * r - text_width, -end_y + 0.5 * r), 0.44),
+            (Point::new(-1.4 * r - text_width, -end_y + 0.0 * r), 0.07),
+            (
+                Point::new(-1.4 * r - text_width, -end_y + 0.5 * r - 0.5 * last_h),
+                0.10,
+            ),
+            (
+                Point::new(-1.3 * r - text_width, -end_y - 0.5 * r - 0.5 * last_h),
+                0.02,
+            ),
+            (
+                Point::new(-1.3 * r - text_width, -end_y + 0.0 * r - last_h),
+                0.37,
+            ),
+            (Point::new(-(1.0 / 3.0) * text_width, 1.4 * r), 0.70),
+            (
+                Point::new(-(1.0 / 3.0) * text_width, -1.4 * r - text_height),
+                0.74,
+            ),
+            (Point::new(-0.5 * text_width, 1.4 * r), 0.67),
+            (Point::new(-0.5 * text_width, -1.4 * r - text_height), 0.89),
+            (
+                Point::new(-(2.0 / 3.0) * text_width, -1.4 * r - text_height),
+                0.74,
+            ),
+            (
+                Point::new(-(2.0 / 3.0) * text_width, -1.4 * r - text_height),
+                1.0,
+            ),
         ];
         offsets
     }
@@ -2068,24 +2447,35 @@ impl MapGenerator {
         let te = self.font_data.get_text_extents(text);
         let px = self.get_pixel_coordinates(pos);
         let minp = self.get_map_coordinates(Point::new(px.x + te.offx, px.y + te.offy));
-        let maxp = self.get_map_coordinates(Point::new(px.x + te.offx + te.width, px.y + te.offy + te.height));
+        let maxp = self.get_map_coordinates(Point::new(
+            px.x + te.offx + te.width,
+            px.y + te.offy + te.height,
+        ));
         Extents2d::new(minp.x, maxp.y, maxp.x, minp.y)
     }
 
     fn get_character_extents(&self, text: &str, pos: Point) -> Vec<Extents2d> {
         let ces = self.font_data.get_character_extents(text);
         let px = self.get_pixel_coordinates(pos);
-        ces.iter().map(|ce| {
-            let minp = self.get_map_coordinates(Point::new(px.x + ce.offx, px.y + ce.offy));
-            let maxp = self.get_map_coordinates(Point::new(px.x + ce.offx + ce.width, px.y + ce.offy + ce.height));
-            Extents2d::new(minp.x, maxp.y, maxp.x, minp.y)
-        }).collect()
+        ces.iter()
+            .map(|ce| {
+                let minp = self.get_map_coordinates(Point::new(px.x + ce.offx, px.y + ce.offy));
+                let maxp = self.get_map_coordinates(Point::new(
+                    px.x + ce.offx + ce.width,
+                    px.y + ce.offy + ce.height,
+                ));
+                Extents2d::new(minp.x, maxp.y, maxp.x, minp.y)
+            })
+            .collect()
     }
 
     fn get_pixel_coordinates(&self, p: Point) -> Point {
         let nx = (p.x - self.extents.minx) / (self.extents.maxx - self.extents.minx);
         let ny = (p.y - self.extents.miny) / (self.extents.maxy - self.extents.miny);
-        Point::new(self.img_width as f64 * nx, self.img_height as f64 * (1.0 - ny))
+        Point::new(
+            self.img_width as f64 * nx,
+            self.img_height as f64 * (1.0 - ny),
+        )
     }
 
     fn get_map_coordinates(&self, p: Point) -> Point {
@@ -2147,7 +2537,9 @@ impl MapGenerator {
         self.initialize_label_base_scores(labels);
 
         for label in labels.iter_mut() {
-            label.candidates.sort_by(|a, b| a.base_score.partial_cmp(&b.base_score).unwrap());
+            label
+                .candidates
+                .sort_by(|a, b| a.base_score.partial_cmp(&b.base_score).unwrap());
             label.candidates.truncate(self.num_area_label_candidates);
         }
     }
@@ -2161,14 +2553,22 @@ impl MapGenerator {
     }
 
     fn get_edge_score(&self, ext: Extents2d) -> f64 {
-        if !self.extents.contains_point(Point::new(ext.minx, ext.miny)) { return self.edge_score_penalty; }
-        if !self.extents.contains_point(Point::new(ext.maxx, ext.maxy)) { return self.edge_score_penalty; }
+        if !self.extents.contains_point(Point::new(ext.minx, ext.miny)) {
+            return self.edge_score_penalty;
+        }
+        if !self.extents.contains_point(Point::new(ext.maxx, ext.maxy)) {
+            return self.edge_score_penalty;
+        }
         0.0
     }
 
     fn initialize_label_marker_scores(&self, labels: &mut Vec<Label>, is_area: bool) {
         let map_h = self.extents.maxy - self.extents.miny;
-        let city_r_factor = if is_area { self.area_label_marker_radius_factor } else { self.label_marker_radius_factor };
+        let city_r_factor = if is_area {
+            self.area_label_marker_radius_factor
+        } else {
+            self.label_marker_radius_factor
+        };
         let town_r_factor = city_r_factor;
         let city_r = (self.city_marker_radius / self.img_height as f64) * map_h * city_r_factor;
         let town_r = (self.town_marker_radius / self.img_height as f64) * map_h * town_r_factor;
@@ -2180,12 +2580,18 @@ impl MapGenerator {
             for c in label.candidates.iter_mut() {
                 let mut count = 0;
                 for &cp in &city_positions {
-                    let me = Extents2d::new(cp.x-city_r, cp.y-city_r, cp.x+city_r, cp.y+city_r);
-                    if extents_overlap(c.extents, me) { count += 1; }
+                    let me =
+                        Extents2d::new(cp.x - city_r, cp.y - city_r, cp.x + city_r, cp.y + city_r);
+                    if extents_overlap(c.extents, me) {
+                        count += 1;
+                    }
                 }
                 for &tp in &town_positions {
-                    let me = Extents2d::new(tp.x-town_r, tp.y-town_r, tp.x+town_r, tp.y+town_r);
-                    if extents_overlap(c.extents, me) { count += 1; }
+                    let me =
+                        Extents2d::new(tp.x - town_r, tp.y - town_r, tp.x + town_r, tp.y + town_r);
+                    if extents_overlap(c.extents, me) {
+                        count += 1;
+                    }
                 }
                 c.marker_score = count as f64 * self.marker_score_penalty;
             }
@@ -2195,45 +2601,75 @@ impl MapGenerator {
     fn initialize_label_contour_scores(&self, labels: &mut Vec<Label>) {
         let mut points = Vec::new();
         self.data_to_points(&self.contour_data.clone(), &mut points);
-        if points.is_empty() { return; }
+        if points.is_empty() {
+            return;
+        }
         let dx = self.spatial_grid_resolution_factor * self.resolution;
         let grid = SpatialPointGrid::new(&points, dx);
         for label in labels.iter_mut() {
-            compute_penalty_scores(&mut label.candidates, &grid, self.min_contour_score_penalty, self.max_contour_score_penalty, |c: &mut LabelCandidate, s| c.contour_score = s);
+            compute_penalty_scores(
+                &mut label.candidates,
+                &grid,
+                self.min_contour_score_penalty,
+                self.max_contour_score_penalty,
+                |c: &mut LabelCandidate, s| c.contour_score = s,
+            );
         }
     }
 
     fn initialize_label_river_scores(&self, labels: &mut Vec<Label>) {
         let mut points = Vec::new();
         self.data_to_points(&self.river_data.clone(), &mut points);
-        if points.is_empty() { return; }
+        if points.is_empty() {
+            return;
+        }
         let dx = self.spatial_grid_resolution_factor * self.resolution;
         let grid = SpatialPointGrid::new(&points, dx);
         for label in labels.iter_mut() {
-            compute_penalty_scores(&mut label.candidates, &grid, self.min_river_score_penalty, self.max_river_score_penalty, |c: &mut LabelCandidate, s| c.river_score = s);
+            compute_penalty_scores(
+                &mut label.candidates,
+                &grid,
+                self.min_river_score_penalty,
+                self.max_river_score_penalty,
+                |c: &mut LabelCandidate, s| c.river_score = s,
+            );
         }
     }
 
     fn initialize_label_border_scores(&self, labels: &mut Vec<Label>) {
         let mut points = Vec::new();
         self.data_to_points(&self.border_data.clone(), &mut points);
-        if points.is_empty() { return; }
+        if points.is_empty() {
+            return;
+        }
         let dx = self.spatial_grid_resolution_factor * self.resolution;
         let grid = SpatialPointGrid::new(&points, dx);
         for label in labels.iter_mut() {
-            compute_penalty_scores(&mut label.candidates, &grid, self.min_border_score_penalty, self.max_border_score_penalty, |c: &mut LabelCandidate, s| c.border_score = s);
+            compute_penalty_scores(
+                &mut label.candidates,
+                &grid,
+                self.min_border_score_penalty,
+                self.max_border_score_penalty,
+                |c: &mut LabelCandidate, s| c.border_score = s,
+            );
         }
     }
 
     fn initialize_area_orientation_scores(&self, labels: &mut Vec<Label>) {
         let face_positions = self.compute_face_positions();
         let nf = self.voronoi.faces.len();
-        let is_in_map: Vec<bool> = (0..nf).map(|i| self.extents.contains_point(face_positions[i])).collect();
+        let is_in_map: Vec<bool> = (0..nf)
+            .map(|i| self.extents.contains_point(face_positions[i]))
+            .collect();
 
         for label in labels.iter_mut() {
-            if label.candidates.is_empty() { continue; }
+            if label.candidates.is_empty() {
+                continue;
+            }
             let territory_id = label.candidates[0].city_id;
-            if territory_id < 0 { continue; }
+            if territory_id < 0 {
+                continue;
+            }
 
             let mut territory_pts = Vec::new();
             let mut water_pts = Vec::new();
@@ -2241,8 +2677,14 @@ impl MapGenerator {
             let mut com = Point::new(0.0, 0.0);
 
             for i in 0..nf {
-                if !is_in_map[i] { continue; }
-                let id = if i < self.territory_data.len() { self.territory_data[i] } else { -1 };
+                if !is_in_map[i] {
+                    continue;
+                }
+                let id = if i < self.territory_data.len() {
+                    self.territory_data[i]
+                } else {
+                    -1
+                };
                 if id == territory_id {
                     territory_pts.push(face_positions[i]);
                     com.x += face_positions[i].x;
@@ -2254,11 +2696,18 @@ impl MapGenerator {
                 }
             }
 
-            if territory_pts.is_empty() { continue; }
+            if territory_pts.is_empty() {
+                continue;
+            }
             com.x /= territory_pts.len() as f64;
             com.y /= territory_pts.len() as f64;
-            let max_dist_sq = territory_pts.iter()
-                .map(|p| { let dx = com.x-p.x; let dy = com.y-p.y; dx*dx+dy*dy })
+            let max_dist_sq = territory_pts
+                .iter()
+                .map(|p| {
+                    let dx = com.x - p.x;
+                    let dy = com.y - p.y;
+                    dx * dx + dy * dy
+                })
                 .fold(0.0f64, f64::max);
             let territory_radius = max_dist_sq.sqrt().max(1e-6);
 
@@ -2273,12 +2722,14 @@ impl MapGenerator {
                 let wc = get_label_point_count(c, &water_grid);
                 let total = (tc + ec + wc) as f64;
                 let score = if total > 0.0 {
-                    (tc as f64 / total) * self.territory_score +
-                    (ec as f64 / total) * self.enemy_score +
-                    (wc as f64 / total) * self.water_score
-                } else { 0.0 };
+                    (tc as f64 / total) * self.territory_score
+                        + (ec as f64 / total) * self.enemy_score
+                        + (wc as f64 / total) * self.water_score
+                } else {
+                    0.0
+                };
                 let ext = c.extents;
-                let center = Point::new(0.5*(ext.maxx+ext.minx), 0.5*(ext.maxy+ext.miny));
+                let center = Point::new(0.5 * (ext.maxx + ext.minx), 0.5 * (ext.maxy + ext.miny));
                 let dist = point_distance(center, com) / territory_radius;
                 c.orientation_score = score + dist;
             }
@@ -2288,8 +2739,13 @@ impl MapGenerator {
     fn initialize_label_base_scores(&self, labels: &mut Vec<Label>) {
         for label in labels.iter_mut() {
             for c in label.candidates.iter_mut() {
-                c.base_score = (c.orientation_score + c.edge_score + c.marker_score +
-                    c.contour_score + c.river_score + c.border_score) / 6.0;
+                c.base_score = (c.orientation_score
+                    + c.edge_score
+                    + c.marker_score
+                    + c.contour_score
+                    + c.river_score
+                    + c.border_score)
+                    / 6.0;
             }
         }
     }
@@ -2299,14 +2755,17 @@ impl MapGenerator {
         let h = self.extents.maxy - self.extents.miny;
         let eps = 1e-9;
         for path in data {
-            if path.len() < 2 { continue; }
+            if path.len() < 2 {
+                continue;
+            }
             let last_i = path.len() - 2;
-            let is_loop = (path[0] - path[last_i]).abs() < eps && (path[1] - path[last_i + 1]).abs() < eps;
+            let is_loop =
+                (path[0] - path[last_i]).abs() < eps && (path[1] - path[last_i + 1]).abs() < eps;
             let end = if is_loop { last_i } else { path.len() };
             let mut i = 0;
             while i + 1 < end {
                 let x = self.extents.minx + path[i] * w;
-                let y = self.extents.miny + path[i+1] * h;
+                let y = self.extents.miny + path[i + 1] * h;
                 points.push(Point::new(x, y));
                 i += 2;
             }
@@ -2391,16 +2850,25 @@ impl MapGenerator {
         }
 
         // Build collision data
-        let all_candidates: Vec<(usize, usize, Extents2d)> = labels.iter().enumerate()
+        let all_candidates: Vec<(usize, usize, Extents2d)> = labels
+            .iter()
+            .enumerate()
             .flat_map(|(j, label)| {
-                label.candidates.iter().enumerate().map(move |(i, c)| (j, c.collision_idx, c.extents))
-            }).collect();
+                label
+                    .candidates
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, c)| (j, c.collision_idx, c.extents))
+            })
+            .collect();
 
         for label in labels.iter_mut() {
             for c in label.candidates.iter_mut() {
                 c.collision_data.clear();
                 for &(other_parent, other_coll_idx, other_ext) in &all_candidates {
-                    if other_parent == c.parent_idx { continue; }
+                    if other_parent == c.parent_idx {
+                        continue;
+                    }
                     if extents_overlap(c.extents, other_ext) {
                         c.collision_data.push(other_coll_idx);
                     }
@@ -2442,7 +2910,9 @@ impl MapGenerator {
 
             repositionings += 1;
             if successful > max_successful || repositionings > max_total {
-                if successful == 0 { break; }
+                if successful == 0 {
+                    break;
+                }
                 temperature *= self.annealing_factor;
                 temp_changes += 1;
                 repositionings = 0;
@@ -2454,14 +2924,20 @@ impl MapGenerator {
     fn calculate_placement_score(&self, labels: &[Label], max_id: usize) -> f64 {
         let mut is_active = vec![false; max_id + 1];
         for label in labels {
-            if label.candidates.is_empty() { continue; }
+            if label.candidates.is_empty() {
+                continue;
+            }
             let cid = label.candidates[label.candidate_idx].collision_idx;
-            if cid < is_active.len() { is_active[cid] = true; }
+            if cid < is_active.len() {
+                is_active[cid] = true;
+            }
         }
         let mut sum = 0.0;
         let mut count = 0;
         for label in labels {
-            if label.candidates.is_empty() { continue; }
+            if label.candidates.is_empty() {
+                continue;
+            }
             let c = &label.candidates[label.candidate_idx];
             let mut s = c.base_score;
             for &col_idx in &c.collision_data {
@@ -2472,7 +2948,11 @@ impl MapGenerator {
             sum += s;
             count += 1;
         }
-        if count > 0 { sum / count as f64 } else { 0.0 }
+        if count > 0 {
+            sum / count as f64
+        } else {
+            0.0
+        }
     }
 
     // ----- main output -----
@@ -2506,56 +2986,484 @@ impl MapGenerator {
     ///
     /// # 参考来源
     /// - 原始 C++ 实现: src/mapgenerator.cpp, getDrawData()
+    /// 导出高度图为规则网格
+    ///
+    /// 将 Voronoi 节点的高度插值到规则网格上，用于地形渲染
+    ///
+    /// # 参数
+    /// * `grid_width` - 网格宽度（像素）
+    /// * `grid_height` - 网格高度（像素）
+    ///
+    /// # 返回
+    /// 扁平化的高度数组，按行优先顺序排列
+    pub fn export_heightmap(&self, grid_width: u32, grid_height: u32) -> Vec<f32> {
+        let mut heightmap = vec![0.0f32; (grid_width * grid_height) as usize];
+
+        // 构建空间索引以加速局部邻域查询
+        let points: Vec<Point> = self
+            .vertex_map
+            .vertices
+            .iter()
+            .map(|v| v.position)
+            .collect();
+
+        let grid_size = (self.resolution * 2.0).max((self.extents.maxx - self.extents.minx) / 80.0);
+        let spatial_grid = SpatialPointGrid::new(&points, grid_size);
+
+        for y in 0..grid_height {
+            for x in 0..grid_width {
+                // 使用像素中心采样，避免导出栅格整体偏半个像素。
+                let px = self.sample_grid_world_x(x, grid_width);
+                let py = self.sample_grid_world_y(y, grid_height);
+
+                let height = self.interpolate_height_idw(px, py, &spatial_grid);
+                heightmap[(y * grid_width + x) as usize] = height as f32;
+            }
+        }
+
+        heightmap
+    }
+
+    /// 使用局部 k 近邻的 IDW 插值导出高度，避免最近邻导致的块状伪影。
+    fn interpolate_height_idw(&self, x: f64, y: f64, spatial_grid: &SpatialPointGrid) -> f64 {
+        let map_width = self.extents.maxx - self.extents.minx;
+        let map_height = self.extents.maxy - self.extents.miny;
+        let max_radius = map_width.max(map_height);
+
+        let mut radius = (self.resolution * 2.5).max(map_width / 120.0);
+        let mut candidates = Vec::new();
+        while candidates.len() < 4 && radius < max_radius {
+            let search_extents = Extents2d::new(x - radius, y - radius, x + radius, y + radius);
+            candidates = spatial_grid.get_point_indices(search_extents);
+            radius *= 2.0;
+        }
+
+        if candidates.is_empty() {
+            return self.nearest_height_value(x, y);
+        }
+
+        candidates.sort_by(|&a, &b| {
+            let pa = self.vertex_map.vertices[a].position;
+            let pb = self.vertex_map.vertices[b].position;
+            let da = (pa.x - x) * (pa.x - x) + (pa.y - y) * (pa.y - y);
+            let db = (pb.x - x) * (pb.x - x) + (pb.y - y) * (pb.y - y);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut weighted_sum = 0.0;
+        let mut weight_total = 0.0;
+        for &idx in candidates.iter().take(6) {
+            let p = self.vertex_map.vertices[idx].position;
+            let dx = p.x - x;
+            let dy = p.y - y;
+            let dist2 = dx * dx + dy * dy;
+
+            if dist2 <= 1e-12 {
+                return *self.height_map.get(idx);
+            }
+
+            let weight = 1.0 / dist2;
+            weighted_sum += *self.height_map.get(idx) * weight;
+            weight_total += weight;
+        }
+
+        if weight_total > 0.0 {
+            weighted_sum / weight_total
+        } else {
+            self.nearest_height_value(x, y)
+        }
+    }
+
+    fn nearest_height_value(&self, x: f64, y: f64) -> f64 {
+        let mut min_dist = f64::MAX;
+        let mut nearest_height = 0.0;
+
+        for (i, v) in self.vertex_map.vertices.iter().enumerate() {
+            let dx = v.position.x - x;
+            let dy = v.position.y - y;
+            let dist = dx * dx + dy * dy;
+            if dist < min_dist {
+                min_dist = dist;
+                nearest_height = *self.height_map.get(i);
+            }
+        }
+
+        nearest_height
+    }
+
+    fn sample_grid_world_x(&self, x: u32, grid_width: u32) -> f64 {
+        let t = if grid_width <= 1 {
+            0.5
+        } else {
+            (x as f64 + 0.5) / grid_width as f64
+        };
+        self.extents.minx + t * (self.extents.maxx - self.extents.minx)
+    }
+
+    fn sample_grid_world_y(&self, y: u32, grid_height: u32) -> f64 {
+        let t = if grid_height <= 1 {
+            0.5
+        } else {
+            (y as f64 + 0.5) / grid_height as f64
+        };
+        self.extents.miny + t * (self.extents.maxy - self.extents.miny)
+    }
+
+    /// 导出流量图为规则网格
+    ///
+    /// 用于河流渲染
+    pub fn export_flux_map(&self, grid_width: u32, grid_height: u32) -> Vec<f32> {
+        if grid_width == 0 || grid_height == 0 {
+            return Vec::new();
+        }
+
+        let mut flux_map = vec![0.0f32; (grid_width * grid_height) as usize];
+
+        for i in 0..self.vertex_map.size() {
+            let next = *self.flow_map.get(i);
+            if next < 0 {
+                continue;
+            }
+
+            let p0 = self.vertex_map.vertices[i].position;
+            let p1 = self.vertex_map.vertices[next as usize].position;
+            let flux = *self.flux_map.get(i);
+            if flux <= 0.0 {
+                continue;
+            }
+
+            self.rasterize_flux_segment(
+                &mut flux_map,
+                grid_width,
+                grid_height,
+                p0,
+                p1,
+                flux as f32,
+            );
+        }
+
+        flux_map
+    }
+
+    /// 将一段流路投影到规则栅格上。
+    ///
+    /// 这里直接栅格化 flow_map 线段，比对离散顶点做最近邻更接近真实河道位置。
+    fn rasterize_flux_segment(
+        &self,
+        flux_map: &mut [f32],
+        grid_width: u32,
+        grid_height: u32,
+        start: Point,
+        end: Point,
+        flux: f32,
+    ) {
+        let cell_width = (self.extents.maxx - self.extents.minx) / grid_width.max(1) as f64;
+        let cell_height = (self.extents.maxy - self.extents.miny) / grid_height.max(1) as f64;
+        let step_len = cell_width.min(cell_height).max(1e-6) * 0.5;
+
+        let dx = end.x - start.x;
+        let dy = end.y - start.y;
+        let seg_len = (dx * dx + dy * dy).sqrt();
+        let steps = ((seg_len / step_len).ceil() as usize).max(1);
+
+        for step in 0..=steps {
+            let t = step as f64 / steps as f64;
+            let x = start.x + dx * t;
+            let y = start.y + dy * t;
+            self.splat_flux_sample(flux_map, grid_width, grid_height, x, y, flux);
+        }
+    }
+
+    fn splat_flux_sample(
+        &self,
+        flux_map: &mut [f32],
+        grid_width: u32,
+        grid_height: u32,
+        world_x: f64,
+        world_y: f64,
+        flux: f32,
+    ) {
+        if grid_width == 0 || grid_height == 0 {
+            return;
+        }
+
+        let gx = self.world_to_grid_x(world_x, grid_width);
+        let gy = self.world_to_grid_y(world_y, grid_height);
+
+        let x0 = gx.floor() as i32;
+        let y0 = gy.floor() as i32;
+        let fx = (gx - x0 as f64) as f32;
+        let fy = (gy - y0 as f64) as f32;
+
+        let weights = [
+            (x0, y0, (1.0 - fx) * (1.0 - fy)),
+            (x0 + 1, y0, fx * (1.0 - fy)),
+            (x0, y0 + 1, (1.0 - fx) * fy),
+            (x0 + 1, y0 + 1, fx * fy),
+        ];
+
+        for (x, y, weight) in weights {
+            if weight <= 0.0 {
+                continue;
+            }
+            if x < 0 || y < 0 || x >= grid_width as i32 || y >= grid_height as i32 {
+                continue;
+            }
+
+            let idx = y as usize * grid_width as usize + x as usize;
+            flux_map[idx] = flux_map[idx].max(flux * weight);
+        }
+    }
+
+    fn world_to_grid_x(&self, world_x: f64, grid_width: u32) -> f64 {
+        let width = (self.extents.maxx - self.extents.minx).max(1e-12);
+        (((world_x - self.extents.minx) / width) * grid_width as f64 - 0.5)
+            .clamp(-0.5, grid_width as f64 - 0.5)
+    }
+
+    fn world_to_grid_y(&self, world_y: f64, grid_height: u32) -> f64 {
+        let height = (self.extents.maxy - self.extents.miny).max(1e-12);
+        (((world_y - self.extents.miny) / height) * grid_height as f64 - 0.5)
+            .clamp(-0.5, grid_height as f64 - 0.5)
+    }
+
+    /// 导出陆地蒙版为规则网格
+    ///
+    /// 使用与 contour 相同的 is_land_face 逻辑，确保蒙版与海岸线完全一致。
+    /// 返回值：1 = 陆地，0 = 海洋
+    ///
+    /// # 与原始 C++ 的差异
+    /// 原始 C++ 版本没有这个导出函数；这是本 fork 为浏览器卫星风格渲染
+    /// 增加的栅格化输出。由于导出过程会按像素查询最近面，Rust 版本额外使用
+    /// `SpatialPointGrid` 缩小候选范围，否则每个像素都线性扫描所有面会非常慢。
+    pub fn export_land_mask(&mut self, grid_width: u32, grid_height: u32) -> Vec<u8> {
+        // 确保 is_land_face_table 已初始化
+        if !self.is_land_face_table_initialized {
+            self.init_land_face_table();
+        }
+
+        // PERF: face_positions 是初始化阶段缓存好的面中心点。
+        // 这里再配合空间网格做局部查询，避免“每个像素 x 每个面”的全扫描。
+        let face_positions = &self.face_positions;
+        let grid_size = (self.extents.maxx - self.extents.minx) / 80.0;
+        let spatial_grid =
+            SpatialPointGrid::new(face_positions, grid_size.max(self.resolution * 2.0));
+
+        let mut mask = vec![0u8; (grid_width * grid_height) as usize];
+
+        for y in 0..grid_height {
+            for x in 0..grid_width {
+                let px = self.extents.minx
+                    + (x as f64 / grid_width as f64) * (self.extents.maxx - self.extents.minx);
+                let py = self.extents.miny
+                    + (y as f64 / grid_height as f64) * (self.extents.maxy - self.extents.miny);
+
+                let nearest_face_idx = self.find_nearest_face_index(px, py, &spatial_grid);
+                let is_land = match nearest_face_idx {
+                    Some(fidx) if fidx < self.is_land_face_table.len() => {
+                        self.is_land_face_table[fidx]
+                    }
+                    _ => false,
+                };
+
+                mask[(y * grid_width + x) as usize] = if is_land { 1 } else { 0 };
+            }
+        }
+
+        mask
+    }
+
+    /// 导出精确的陆地面多边形。
+    ///
+    /// 与 `land_mask` 不同，这里直接复用 Voronoi 面的几何边界，
+    /// 供卫星风格渲染做精确裁剪，确保海岸线与原始矢量地图完全一致。
+    pub fn export_land_polygons(&mut self) -> Vec<Vec<f64>> {
+        if !self.is_land_face_table_initialized {
+            self.init_land_face_table();
+        }
+
+        let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
+        let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
+        let mut polygons = Vec::new();
+
+        for fidx in 0..self.face_vertices.len() {
+            if fidx >= self.is_land_face_table.len() || !self.is_land_face_table[fidx] {
+                continue;
+            }
+
+            let verts = &self.face_vertices[fidx];
+            if verts.len() < 3 || !self.face_polygon_intersects_map(verts) {
+                continue;
+            }
+
+            let mut polygon = Vec::with_capacity(verts.len() * 2);
+            for &vidx in verts {
+                let Some(vertex) = self.voronoi.vertices.get(vidx) else {
+                    continue;
+                };
+                polygon.push((vertex.position.x - self.extents.minx) * inv_w);
+                polygon.push((vertex.position.y - self.extents.miny) * inv_h);
+            }
+
+            if polygon.len() >= 6 {
+                polygons.push(polygon);
+            }
+        }
+
+        polygons
+    }
+
+    fn face_polygon_intersects_map(&self, verts: &[usize]) -> bool {
+        let mut minx = f64::INFINITY;
+        let mut miny = f64::INFINITY;
+        let mut maxx = f64::NEG_INFINITY;
+        let mut maxy = f64::NEG_INFINITY;
+        let mut has_vertex = false;
+
+        for &vidx in verts {
+            let Some(vertex) = self.voronoi.vertices.get(vidx) else {
+                continue;
+            };
+            has_vertex = true;
+            let position = vertex.position;
+            if self.extents.contains_point(position) {
+                return true;
+            }
+            minx = minx.min(position.x);
+            miny = miny.min(position.y);
+            maxx = maxx.max(position.x);
+            maxy = maxy.max(position.y);
+        }
+
+        has_vertex
+            && maxx >= self.extents.minx
+            && minx <= self.extents.maxx
+            && maxy >= self.extents.miny
+            && miny <= self.extents.maxy
+    }
+
+    fn find_nearest_face_index(
+        &self,
+        x: f64,
+        y: f64,
+        spatial_grid: &SpatialPointGrid,
+    ) -> Option<usize> {
+        let map_width = self.extents.maxx - self.extents.minx;
+        let map_height = self.extents.maxy - self.extents.miny;
+        let max_radius = map_width.max(map_height);
+
+        let mut radius = (self.resolution * 2.5).max(map_width / 120.0);
+        let mut candidates = Vec::new();
+
+        while candidates.is_empty() && radius < max_radius {
+            let search_extents = Extents2d::new(x - radius, y - radius, x + radius, y + radius);
+            candidates = spatial_grid.get_point_indices(search_extents);
+            radius *= 2.0;
+        }
+
+        candidates.into_iter().min_by(|&a, &b| {
+            let pa = self.face_positions[a];
+            let pb = self.face_positions[b];
+            let da = (pa.x - x) * (pa.x - x) + (pa.y - y) * (pa.y - y);
+            let db = (pb.x - x) * (pb.x - x) + (pb.y - y) * (pb.y - y);
+            da.partial_cmp(&db).unwrap_or(Ordering::Equal)
+        })
+    }
+
     pub fn get_draw_data(&mut self) -> String {
+        self.get_draw_data_with_options(MapExportOptions::default())
+    }
+
+    /// 获取地图绘图数据，并根据导出选项决定是否附带栅格数据。
+    ///
+    /// 默认的矢量绘图数据与原始 C++ `getDrawData()` 保持同一职责：
+    /// 输出 contour / river / slope / city / town / territory / label。
+    /// 本 fork 在此基础上额外支持 heightmap / flux_map / land_mask，
+    /// 但这些字段主要给浏览器卫星风格使用，因此可以按需关闭。
+    ///
+    /// # 参数
+    /// * `options` - 导出控制选项
+    ///
+    /// # 性能说明
+    /// 当 `include_raster_data = false` 时，可显著减少 JSON 体积，
+    /// 从而降低 WASM -> Worker -> 主线程链路中的序列化、拷贝和解析成本。
+    ///
+    /// # 参考来源
+    /// - 原始 C++ 实现: src/mapgenerator.cpp, getDrawData()
+    pub fn get_draw_data_with_options(&mut self, options: MapExportOptions) -> String {
+        // PERF: 栅格数据是本 fork 新增的能力，不属于原始 C++ 导出契约。
+        // Web 普通渲染路径只消费矢量数据，因此这里允许按需跳过大数组导出。
         self.ensure_eroded();
 
         let contour = if self.contour_enabled {
             let cd = self.get_contour_draw_data();
             self.contour_data = cd.clone();
             cd
-        } else { Vec::new() };
+        } else {
+            Vec::new()
+        };
 
         let river = if self.rivers_enabled {
             let rd = self.get_river_draw_data();
             self.river_data = rd.clone();
             rd
-        } else { Vec::new() };
+        } else {
+            Vec::new()
+        };
 
         let slope = if self.slopes_enabled {
             self.get_slope_draw_data()
-        } else { Vec::new() };
+        } else {
+            Vec::new()
+        };
 
         let city: Vec<f64> = if self.cities_enabled {
             let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
             let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
-            self.cities.iter().flat_map(|c| {
-                let nx = (c.position.x - self.extents.minx) * inv_w;
-                let ny = (c.position.y - self.extents.miny) * inv_h;
-                vec![nx, ny]
-            }).collect()
-        } else { Vec::new() };
+            self.cities
+                .iter()
+                .flat_map(|c| {
+                    let nx = (c.position.x - self.extents.minx) * inv_w;
+                    let ny = (c.position.y - self.extents.miny) * inv_h;
+                    vec![nx, ny]
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let town: Vec<f64> = if self.towns_enabled {
             let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
             let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
-            self.towns.iter().flat_map(|t| {
-                let nx = (t.position.x - self.extents.minx) * inv_w;
-                let ny = (t.position.y - self.extents.miny) * inv_h;
-                vec![nx, ny]
-            }).collect()
-        } else { Vec::new() };
+            self.towns
+                .iter()
+                .flat_map(|t| {
+                    let nx = (t.position.x - self.extents.minx) * inv_w;
+                    let ny = (t.position.y - self.extents.miny) * inv_h;
+                    vec![nx, ny]
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let territory = {
             let td = self.get_territory_draw_data();
             self.border_data = td.clone();
-            if self.borders_enabled { td } else { Vec::new() }
+            if self.borders_enabled {
+                td
+            } else {
+                Vec::new()
+            }
         };
 
         let label: Vec<Value> = if self.labels_enabled {
             self.get_label_draw_data()
-        } else { Vec::new() };
+        } else {
+            Vec::new()
+        };
 
-        let output = json!({
+        let mut output = json!({
             "image_width": self.img_width,
             "image_height": self.img_height,
             "draw_scale": self.draw_scale,
@@ -2568,6 +3476,33 @@ impl MapGenerator {
             "label": label,
         });
 
+        if options.include_raster_data {
+            // 导出栅格数据（降采样以减小文件大小）
+            let raster_width = self.img_width / 4;
+            let raster_height = self.img_height / 4;
+            let heightmap = self.export_heightmap(raster_width, raster_height);
+            let flux_map = self.export_flux_map(raster_width, raster_height);
+            let land_mask = self.export_land_mask(raster_width, raster_height);
+            let land_polygons = self.export_land_polygons();
+
+            output["heightmap"] = json!({
+                "width": raster_width,
+                "height": raster_height,
+                "data": heightmap,
+            });
+            output["flux_map"] = json!({
+                "width": raster_width,
+                "height": raster_height,
+                "data": flux_map,
+            });
+            output["land_mask"] = json!({
+                "width": raster_width,
+                "height": raster_height,
+                "data": land_mask,
+            });
+            output["land_polygons"] = json!(land_polygons);
+        }
+
         serde_json::to_string(&output).unwrap()
     }
 }
@@ -2575,7 +3510,7 @@ impl MapGenerator {
 fn point_distance(a: Point, b: Point) -> f64 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
-    (dx*dx + dy*dy).sqrt()
+    (dx * dx + dy * dy).sqrt()
 }
 
 fn extents_overlap(a: Extents2d, b: Extents2d) -> bool {
@@ -2602,7 +3537,10 @@ fn smooth_positions(positions: Vec<(f64, f64)>, factor: f64) -> Vec<(f64, f64)> 
 }
 
 fn get_label_point_count(c: &LabelCandidate, grid: &SpatialPointGrid) -> usize {
-    c.char_extents.iter().map(|&ce| grid.get_point_count(ce)).sum()
+    c.char_extents
+        .iter()
+        .map(|&ce| grid.get_point_count(ce))
+        .sum()
 }
 
 fn compute_penalty_scores(
@@ -2612,10 +3550,15 @@ fn compute_penalty_scores(
     max_penalty: f64,
     setter: impl Fn(&mut LabelCandidate, f64),
 ) {
-    let counts: Vec<usize> = candidates.iter().map(|c| get_label_point_count(c, grid)).collect();
+    let counts: Vec<usize> = candidates
+        .iter()
+        .map(|c| get_label_point_count(c, grid))
+        .collect();
     let nonzero: Vec<usize> = counts.iter().filter(|&&c| c > 0).copied().collect();
     if nonzero.is_empty() {
-        for c in candidates.iter_mut() { setter(c, 0.0); }
+        for c in candidates.iter_mut() {
+            setter(c, 0.0);
+        }
         return;
     }
     let min_c = *nonzero.iter().min().unwrap();

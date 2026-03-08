@@ -20,6 +20,7 @@ import {
   getBrowserLanguage,
   serializeAppLanguage
 } from "@/lib/language";
+import { useMapGenerator } from "@/hooks/useMapGenerator";
 import { colorSchemeManager, cssVariablesResolver, theme } from "@/theme";
 import type {
   AppLanguage,
@@ -29,8 +30,6 @@ import type {
   RenderBackend,
   StatusMessage
 } from "@/types/map";
-
-type WasmModule = typeof import("../pkg/fantasy_map_generator.js");
 
 const defaultConfig: MapConfig = {
   seed: 0,
@@ -58,6 +57,7 @@ function AppContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rendererRef = useRef<MapRendererHandle>(null);
   const { toggleColorScheme } = useMantineColorScheme();
+  const { generate: generateMap } = useMapGenerator();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobilePanelOpened, { open: openMobilePanel, close: closeMobilePanel }] = useDisclosure(false);
@@ -71,9 +71,9 @@ function AppContent() {
 
   const [config, setConfig] = useState(defaultConfig);
   const [layers, setLayers] = useState(defaultLayers);
+  const [satelliteStyle, setSatelliteStyle] = useState(false);
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [mapJson, setMapJson] = useState<string | null>(null);
-  const [wasmModule, setWasmModule] = useState<WasmModule | null>(null);
   const [availableModes, setAvailableModes] = useState<RenderBackend[]>(["svg"]);
   const [renderMode, setRenderMode] = useState<RenderBackend | null>(null);
   const [loading, setLoading] = useState(false);
@@ -89,26 +89,8 @@ function AppContent() {
   }, [i18n, language]);
 
   useEffect(() => {
-    let active = true;
-
-    const bootstrapWasm = async () => {
-      try {
-        const pkg = await import("../pkg/fantasy_map_generator.js");
-        await pkg.default();
-        if (!active) return;
-
-        setWasmModule(pkg);
-        setStatus({ tone: "success", text: t("status.wasmReady") });
-      } catch (cause) {
-        if (!active) return;
-
-        setError(t("errors.wasmInit", { message: cause instanceof Error ? cause.message : String(cause) }));
-        setStatus({ tone: "error", text: t("status.booting") });
-      }
-    };
-
-    void bootstrapWasm();
-    return () => { active = false; };
+    // Worker 会自动初始化 WASM
+    setStatus({ tone: "success", text: t("status.wasmReady") });
   }, [t]);
 
   const updateConfig = useCallback(<Key extends keyof MapConfig>(key: Key, value: MapConfig[Key]) => {
@@ -127,31 +109,26 @@ function AppContent() {
     });
   }, []);
 
-  const handleGenerate = useCallback(async () => {
-    if (!wasmModule) {
-      setError(t("errors.wasmUnavailable"));
-      return;
-    }
-
+  const generateMapData = useCallback(async (includeRasterData: boolean) => {
+    // only request raster data when satellite style is active.
     setLoading(true);
     setError(null);
     setStatus({ tone: "neutral", text: t("status.generating") });
 
     try {
-      const generator = new wasmModule.WasmMapGenerator(
-        config.seed,
-        config.width,
-        config.height,
-        config.resolution
-      );
-      generator.set_draw_scale(config.drawScale);
+      const result = await generateMap({
+        seed: config.seed,
+        width: config.width,
+        height: config.height,
+        resolution: config.resolution,
+        drawScale: config.drawScale,
+        cities: config.cities,
+        towns: config.towns,
+        includeRasterData
+      });
 
-      const json = generator.generate(config.cities, config.towns);
-      const seed = generator.get_seed();
-      generator.free();
-
-      setConfig((current) => ({ ...current, seed }));
-      hydrateMap(json);
+      setConfig((current) => ({ ...current, seed: result.seed }));
+      hydrateMap(result.json);
       setStatus({ tone: "neutral", text: t("status.rendering") });
     } catch (cause) {
       setError(t("errors.generator", { message: cause instanceof Error ? cause.message : String(cause) }));
@@ -159,7 +136,22 @@ function AppContent() {
     } finally {
       setLoading(false);
     }
-  }, [config, hydrateMap, t, wasmModule]);
+  }, [config, generateMap, hydrateMap, t]);
+
+  const handleGenerate = useCallback(async () => {
+    await generateMapData(satelliteStyle);
+  }, [generateMapData, satelliteStyle]);
+
+  const updateSatelliteStyle = useCallback((enabled: boolean) => {
+    setSatelliteStyle(enabled);
+    rendererRef.current?.setSatelliteStyle(enabled);
+
+    // If the current map was generated in vector-only mode, lazily regenerate once
+    // when satellite rendering is enabled so normal map generation stays lean.
+    if (enabled && mapData && (!mapData.heightmap || !mapData.land_mask)) {
+      void generateMapData(true);
+    }
+  }, [generateMapData, mapData]);
 
   const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -201,7 +193,7 @@ function AppContent() {
         return;
       }
 
-      const svg = rendererRef.current?.exportToSVG();
+      const svg = await rendererRef.current?.exportToSVG();
       if (!svg) throw new Error("Renderer is not ready");
 
       downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), `fantasy_map_${Date.now()}.svg`);
@@ -306,7 +298,12 @@ function AppContent() {
         />
 
         {/* Layer control */}
-        <LayerControl layers={layers} onLayerChange={updateLayer} />
+        <LayerControl 
+          layers={layers} 
+          satelliteStyle={satelliteStyle}
+          onLayerChange={updateLayer}
+          onSatelliteStyleChange={updateSatelliteStyle}
+        />
 
         {/* Top toolbar */}
         <TopToolbar

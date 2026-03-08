@@ -41,14 +41,14 @@ pub fn line_intersection(p: Point, r: Point, q: Point, s: Point) -> Option<Point
     if cross.abs() < eps {
         return None;
     }
-    
+
     // 计算从 P 到 Q 的向量
     let vx = q.x - p.x;
     let vy = q.y - p.y;
-    
+
     // 使用叉积公式求解参数 t
     let t = (vx * s.y - vy * s.x) / cross;
-    
+
     // 计算交点: P + t*R
     Some(Point::new(p.x + t * r.x, p.y + t * r.y))
 }
@@ -84,11 +84,11 @@ pub fn line_segment_intersection(a: Point, b: Point, c: Point, d: Point) -> bool
     // 使用叉积: (D-A) × (C-A) 和 (C-A) × (D-A)
     let c1 = (d.y - a.y) * (c.x - a.x) > (c.y - a.y) * (d.x - a.x);
     let c2 = (d.y - b.y) * (c.x - b.x) > (c.y - b.y) * (d.x - b.x);
-    
+
     // 计算 A 和 B 相对于直线 CD 的方向
     let c3 = (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
     let c4 = (d.y - a.y) * (b.x - a.x) > (b.y - a.y) * (d.x - a.x);
-    
+
     // 如果 C 和 D 在 AB 两侧，且 A 和 B 在 CD 两侧，则相交
     (c1 != c2) && (c3 != c4)
 }

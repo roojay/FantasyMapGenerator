@@ -8,9 +8,10 @@ import type { MapData, MapLayers, RenderBackend, RendererPreference } from "@/ty
 
 export interface MapRendererHandle {
   exportToPNG: () => Promise<string>;
-  exportToSVG: () => string;
+  exportToSVG: () => Promise<string>;
   fitToScreen: () => void;
   resetView: () => void;
+  setSatelliteStyle: (enabled: boolean) => void;
 }
 
 interface MapRendererProps {
@@ -33,6 +34,9 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
   const stageRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef<ReactZoomPanPinchContentRef | null>(null);
   const rendererRef = useRef<FantasyMapCanvasRenderer | null>(null);
+  // cache the latest props so backend initialization does not need to
+  // re-run on every data/layer change, avoiding duplicate renderer setup work.
+  const renderStateRef = useRef({ mapData, layers });
   const userAdjustedViewRef = useRef(false);
   const lastAutoFittedMapRef = useRef<MapData | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -49,6 +53,10 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
       onRenderError
     };
   }, [onRendererStateChange, onRenderComplete, onRenderError]);
+
+  useEffect(() => {
+    renderStateRef.current = { mapData, layers };
+  }, [layers, mapData]);
 
   const cancelScheduledFrame = useCallback(() => {
     if (frameRef.current !== null) {
@@ -116,7 +124,12 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
       return rendererRef.current.buildSVGString();
     },
     fitToScreen: () => fitToScreen(),
-    resetView: () => resetView()
+    resetView: () => resetView(),
+    setSatelliteStyle: (enabled: boolean) => {
+      if (rendererRef.current) {
+        rendererRef.current.setSatelliteStyle(enabled);
+      }
+    }
   }), [fitToScreen, resetView]);
 
   useEffect(() => {
@@ -142,16 +155,17 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
         const state = await renderer.initialize(preferredMode);
         if (!active) return;
 
-        renderer.setLayers(layers);
+        const { mapData: currentMapData, layers: currentLayers } = renderStateRef.current;
+        renderer.setLayers(currentLayers);
         callbacksRef.current.onRendererStateChange(state);
 
-        if (mapData) {
-          renderer.loadMapData(mapData);
+        if (currentMapData) {
+          renderer.loadMapData(currentMapData);
           await renderer.render();
-          if (!userAdjustedViewRef.current && lastAutoFittedMapRef.current !== mapData) {
+          if (!userAdjustedViewRef.current && lastAutoFittedMapRef.current !== currentMapData) {
             scheduleViewportTask(() => {
               fitToScreen(0);
-              lastAutoFittedMapRef.current = mapData;
+              lastAutoFittedMapRef.current = currentMapData;
             });
           }
           callbacksRef.current.onRenderComplete(state.mode);
@@ -165,11 +179,14 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
 
     void initializeRenderer();
     return () => { active = false; };
-  }, [fitToScreen, layers, mapData, preferredMode, scheduleViewportTask]);
+  }, [fitToScreen, preferredMode, scheduleViewportTask]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
+    // Renderer mode is initialized in the effect above; guard this effect so map
+    // updates trigger redraws without reinitializing the rendering backend.
+    if (!renderer.currentMode) return;
 
     if (!mapData) {
       lastAutoFittedMapRef.current = null;

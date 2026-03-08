@@ -40,7 +40,7 @@ mod tests {
     fn test_render_style_with_scale() {
         let style = RenderStyle::default();
         let scaled = style.with_scale(2.0);
-        
+
         assert_eq!(scaled.slope_line_width, 2.0);
         assert_eq!(scaled.river_line_width, 5.0);
         assert_eq!(scaled.city_marker_outer_radius, 20.0);
@@ -61,12 +61,11 @@ mod tests {
 
     #[test]
     fn test_json_parse_error_conversion() {
-        let json_err = serde_json::from_str::<serde_json::Value>("invalid json")
-            .unwrap_err();
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let render_err: RenderError = json_err.into();
-        
+
         match render_err {
-            RenderError::JsonParseFailed(_) => {},
+            RenderError::JsonParseFailed(_) => {}
             _ => panic!("Expected JsonParseFailed"),
         }
     }
@@ -85,7 +84,7 @@ mod tests {
         if let Ok(mut renderer) = MapRenderer::new(100, 100) {
             let result = renderer.render(&data);
             assert!(result.is_err());
-            
+
             if let Err(RenderError::InvalidJsonFormat(msg)) = result {
                 assert!(msg.contains("数组"));
             }

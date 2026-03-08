@@ -21,9 +21,9 @@
 //! - **Poisson 圆盘采样**: R. Bridson, "Fast Poisson Disk Sampling", SIGGRAPH 2007
 //! - **Delaunay 三角剖分**: M. Berg, "Computational geometry", Chapter 9
 //! - **Voronoi 图**: M. Berg, "Computational geometry", Chapter 7
-//! - **凹陷填充**: O. Planchon and F. Darboux, "A fast, simple and versatile algorithm 
+//! - **凹陷填充**: O. Planchon and F. Darboux, "A fast, simple and versatile algorithm
 //!   to fill the depressions of digital elevation models", CATENA, 2002
-//! - **标签放置**: S. Edmondson et al., "A General Cartographic Labeling Algorithm", 
+//! - **标签放置**: S. Edmondson et al., "A General Cartographic Labeling Algorithm",
 //!   MERL, 1996
 //!
 //! # 项目结构
@@ -124,6 +124,10 @@ pub mod render;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+/// 卫星风格 SVG 生成模块（需要 wasm feature）
+#[cfg(feature = "wasm")]
+pub mod satellite_svg;
+
 // ===================================
 // 便捷的重导出
 // ===================================
@@ -135,7 +139,7 @@ pub use config::Config;
 pub use data_structures::{Extents2d, Point};
 
 /// 地图生成器
-pub use map_generator::MapGenerator;
+pub use map_generator::{MapExportOptions, MapGenerator};
 
 /// 随机数生成器
 pub use utils::GlibcRand;

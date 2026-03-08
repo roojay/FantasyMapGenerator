@@ -18,13 +18,13 @@ use super::dcel::Point;
 pub struct Extents2d {
     /// 矩形左边界的 x 坐标
     pub minx: f64,
-    
+
     /// 矩形下边界的 y 坐标
     pub miny: f64,
-    
+
     /// 矩形右边界的 x 坐标
     pub maxx: f64,
-    
+
     /// 矩形上边界的 y 坐标
     pub maxy: f64,
 }
@@ -38,7 +38,12 @@ impl Extents2d {
     /// * `maxx` - 右边界
     /// * `maxy` - 上边界
     pub fn new(minx: f64, miny: f64, maxx: f64, maxy: f64) -> Self {
-        Extents2d { minx, miny, maxx, maxy }
+        Extents2d {
+            minx,
+            miny,
+            maxx,
+            maxy,
+        }
     }
 
     /// 检查点是否在边界框内

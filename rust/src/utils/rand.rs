@@ -34,10 +34,10 @@
 pub struct GlibcRand {
     /// 随机数生成器的状态数组（31 个元素）
     state: [u32; 31],
-    
+
     /// 前向指针（feed pointer）
     fptr: usize,
-    
+
     /// 后向指针（rear pointer）
     rptr: usize,
 }
@@ -64,7 +64,7 @@ impl GlibcRand {
         let seed = if seed == 0 { 1 } else { seed };
 
         let mut state = [0u32; 31];
-        
+
         // ===================================
         // 1. 使用 Park-Miller LCG 初始化状态
         // ===================================
@@ -76,10 +76,12 @@ impl GlibcRand {
             let hi = prev / 127773;
             let lo = prev % 127773;
             let mut word = 16807 * lo - 2836 * hi;
-            if word < 0 { word += 2147483647; }
+            if word < 0 {
+                word += 2147483647;
+            }
             state[i] = word as u32;
         }
-        
+
         // ===================================
         // 2. 预热：310 次迭代
         // ===================================
@@ -90,9 +92,13 @@ impl GlibcRand {
             fptr = (fptr + 1) % 31;
             rptr = (rptr + 1) % 31;
         }
-        
+
         // 预热后指针位置：fptr=3, rptr=0
-        GlibcRand { state, fptr: 3, rptr: 0 }
+        GlibcRand {
+            state,
+            fptr: 3,
+            rptr: 0,
+        }
     }
 
     /// 生成下一个随机整数
@@ -110,14 +116,14 @@ impl GlibcRand {
     pub fn rand(&mut self) -> i32 {
         // 更新状态（加法反馈）
         self.state[self.fptr] = self.state[self.fptr].wrapping_add(self.state[self.rptr]);
-        
+
         // 提取结果：右移 1 位，保留 31 位
         let result = (self.state[self.fptr] >> 1) & 0x7fffffff;
-        
+
         // 移动指针（循环）
         self.fptr = (self.fptr + 1) % 31;
         self.rptr = (self.rptr + 1) % 31;
-        
+
         result as i32
     }
 
@@ -170,10 +176,10 @@ mod tests {
             rng.rand();
         }
         assert_eq!(rng.rand(), 1963050744, "rand()[1000] mismatch");
-        assert_eq!(rng.rand(), 30553106,   "rand()[1001] mismatch");
-        assert_eq!(rng.rand(), 957990501,  "rand()[1002] mismatch");
-        assert_eq!(rng.rand(), 953383689,  "rand()[1003] mismatch");
-        assert_eq!(rng.rand(), 348269264,  "rand()[1004] mismatch");
+        assert_eq!(rng.rand(), 30553106, "rand()[1001] mismatch");
+        assert_eq!(rng.rand(), 957990501, "rand()[1002] mismatch");
+        assert_eq!(rng.rand(), 953383689, "rand()[1003] mismatch");
+        assert_eq!(rng.rand(), 348269264, "rand()[1004] mismatch");
     }
 
     #[test]
