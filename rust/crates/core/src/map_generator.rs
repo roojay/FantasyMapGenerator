@@ -1978,6 +1978,100 @@ impl MapGenerator {
     }
 
     // ----- main output -----
+
+    /// Return the raw map data as a [`crate::map_data::MapData`] struct.
+    ///
+    /// This is the preferred low-level API used by renderer plug-ins.
+    pub fn get_map_data(&mut self) -> crate::map_data::MapData {
+        use crate::map_data::{LabelData, MapData};
+        use serde_json::Value;
+
+        self.ensure_eroded();
+
+        let contour = if self.contour_enabled {
+            let cd = self.get_contour_draw_data();
+            self.contour_data = cd.clone();
+            cd
+        } else { Vec::new() };
+
+        let river = if self.rivers_enabled {
+            let rd = self.get_river_draw_data();
+            self.river_data = rd.clone();
+            rd
+        } else { Vec::new() };
+
+        let slope = if self.slopes_enabled {
+            self.get_slope_draw_data()
+        } else { Vec::new() };
+
+        let city: Vec<f64> = if self.cities_enabled {
+            let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
+            let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
+            self.cities.iter().flat_map(|c| {
+                let nx = (c.position.x - self.extents.minx) * inv_w;
+                let ny = (c.position.y - self.extents.miny) * inv_h;
+                vec![nx, ny]
+            }).collect()
+        } else { Vec::new() };
+
+        let town: Vec<f64> = if self.towns_enabled {
+            let inv_w = 1.0 / (self.extents.maxx - self.extents.minx);
+            let inv_h = 1.0 / (self.extents.maxy - self.extents.miny);
+            self.towns.iter().flat_map(|t| {
+                let nx = (t.position.x - self.extents.minx) * inv_w;
+                let ny = (t.position.y - self.extents.miny) * inv_h;
+                vec![nx, ny]
+            }).collect()
+        } else { Vec::new() };
+
+        let territory = {
+            let td = self.get_territory_draw_data();
+            self.border_data = td.clone();
+            if self.borders_enabled { td } else { Vec::new() }
+        };
+
+        let label: Vec<LabelData> = if self.labels_enabled {
+            self.get_label_draw_data()
+                .into_iter()
+                .map(|v: Value| {
+                    let text = v["text"].as_str().unwrap_or("").to_string();
+                    let fontface = v["fontface"].as_str().unwrap_or("").to_string();
+                    let fontsize = v["fontsize"].as_i64().unwrap_or(0) as i32;
+                    let pos = v["position"].as_array().unwrap();
+                    let position = [
+                        pos[0].as_f64().unwrap_or(0.0),
+                        pos[1].as_f64().unwrap_or(0.0),
+                    ];
+                    let ext = v["extents"].as_array().unwrap();
+                    let extents = [
+                        ext[0].as_f64().unwrap_or(0.0),
+                        ext[1].as_f64().unwrap_or(0.0),
+                        ext[2].as_f64().unwrap_or(0.0),
+                        ext[3].as_f64().unwrap_or(0.0),
+                    ];
+                    let char_extents = v["charextents"].as_array()
+                        .map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect())
+                        .unwrap_or_default();
+                    let score = v["score"].as_f64().unwrap_or(0.0);
+                    LabelData { text, fontface, fontsize, position, extents, char_extents, score }
+                })
+                .collect()
+        } else { Vec::new() };
+
+        MapData {
+            image_width: self.img_width,
+            image_height: self.img_height,
+            draw_scale: self.draw_scale,
+            contour,
+            river,
+            slope,
+            city,
+            town,
+            territory,
+            label,
+        }
+    }
+
     pub fn get_draw_data(&mut self) -> String {
         self.ensure_eroded();
 

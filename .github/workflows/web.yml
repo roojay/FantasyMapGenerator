@@ -1,0 +1,73 @@
+name: Web CI/CD
+
+on:
+  push:
+    branches: ["main", "master", "copilot/**"]
+    paths:
+      - "rust/apps/web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "rust/apps/web/**"
+      - ".github/workflows/web.yml"
+
+jobs:
+  build:
+    name: Build & Type-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust/apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: rust/apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: rust/apps/web/dist
+          retention-days: 7
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Only deploy on push to main/master (not PRs)
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+
+      - name: Deploy to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          commit_message: "chore: deploy web demo [skip ci]"

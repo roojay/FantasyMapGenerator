@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# WASM build output from scripts/build-wasm.sh
+public/wasm/

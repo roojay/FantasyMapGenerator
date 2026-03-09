@@ -13,6 +13,7 @@ pub mod node_map;
 pub mod font_face;
 pub mod spatial_point_grid;
 pub mod map_generator;
+pub mod map_data;
 pub mod render;
 
 use clap::Parser;
@@ -114,10 +115,6 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// NOTE: The double-assignment pattern below (px assigned twice) intentionally
-// mirrors the C++ source code behavior where randomDouble() is called twice for x
-// but only the second value is used. This preserves exact RNG state compatibility.
-
 fn initialize_heightmap(map: &mut MapGenerator) {
     let pad = 5.0f64;
     let extents = map.get_extents();
@@ -198,7 +195,6 @@ fn get_label_names(num: usize, rng: &mut GlibcRand) -> Vec<String> {
         }
     }
 
-    // Shuffle (matching C++ implementation)
     for i in (0..cities.len().saturating_sub(1)).rev() {
         let j = rng.rand() as usize % (i + 1);
         cities.swap(i, j);
