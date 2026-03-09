@@ -95,7 +95,7 @@ export function MapViewer3D({ mapData, layers, colorScheme }: MapViewer3DProps) 
     const scene = sceneRef.current;
 
     scene.children
-      .filter(c => c.userData['isMapObject'])
+      .filter(c => (c.userData as { isMapObject?: boolean }).isMapObject)
       .forEach(c => {
         scene.remove(c);
         if (c instanceof THREE.Line || c instanceof THREE.Points) {
@@ -127,7 +127,7 @@ export function MapViewer3D({ mapData, layers, colorScheme }: MapViewer3DProps) 
         const geo = new THREE.BufferGeometry().setFromPoints(pts);
         const mat = new THREE.LineBasicMaterial({ color });
         const line = new THREE.Line(geo, mat);
-        line.userData['isMapObject'] = true;
+        line.userData.isMapObject = true;
         line.name = name;
         scene.add(line);
       });
@@ -146,7 +146,7 @@ export function MapViewer3D({ mapData, layers, colorScheme }: MapViewer3DProps) 
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       const mat = new THREE.PointsMaterial({ color: 0x222233, size: 8 });
       const points = new THREE.Points(geo, mat);
-      points.userData['isMapObject'] = true;
+      points.userData.isMapObject = true;
       scene.add(points);
     }
 
@@ -159,7 +159,7 @@ export function MapViewer3D({ mapData, layers, colorScheme }: MapViewer3DProps) 
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       const mat = new THREE.PointsMaterial({ color: 0x445566, size: 5 });
       const points = new THREE.Points(geo, mat);
-      points.userData['isMapObject'] = true;
+      points.userData.isMapObject = true;
       scene.add(points);
     }
 
