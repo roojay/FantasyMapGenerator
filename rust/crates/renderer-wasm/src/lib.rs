@@ -221,7 +221,7 @@ pub fn generate_map(
     let ext = map.get_extents();
     let n = map.rng_mut().random_double(100.0, 200.0) as i32;
     for _ in 0..n {
-        let _discard = map.rng_mut().random_double(ext.minx - pad, ext.maxx + pad); // advance RNG state
+        let _rng_state_advance = map.rng_mut().random_double(ext.minx - pad, ext.maxx + pad);
         let px = map.rng_mut().random_double(ext.minx - pad, ext.maxx + pad);
         let py = map.rng_mut().random_double(ext.miny - pad, ext.maxy + pad);
         let r = map.rng_mut().random_double(1.0, 8.0);

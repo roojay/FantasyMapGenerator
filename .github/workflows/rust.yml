@@ -1,0 +1,56 @@
+name: Rust CI
+
+on:
+  push:
+    branches: ["main", "master", "copilot/**"]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Build
+        run: cargo build --workspace --all-features
+
+      - name: Test
+        run: cargo test --workspace

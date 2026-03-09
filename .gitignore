@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+*.o
+*.d
+
+# Python
+__pycache__/
+*.pyc
+
+# Rust (workspace builds)
+# Note: Each crate's target/ is excluded via rust/.gitignore
+
+# Node / Web (covered by rust/apps/web/.gitignore)
+node_modules/
+dist/

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { MapData, MapConfig } from '../types/map';
 
+// TODO: wire up config to call the WASM module (generate_map) instead of loading
+// static JSON. Currently loads /map-data.json as a placeholder demo.
 export function useMapData(_config: MapConfig) {
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
