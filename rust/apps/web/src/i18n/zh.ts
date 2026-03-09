@@ -8,6 +8,8 @@ export const zh: TranslationKeys = {
     version: '版本',
     seed: '种子',
     ms: '毫秒',
+    wasmActive: '通过 WebAssembly 实时生成',
+    wasmFallback: '使用静态演示数据（运行 npm run wasm:build 以启用实时生成）',
   },
   config: {
     title: '地图配置',

@@ -26,3 +26,9 @@ pub use map_data::{LabelData, MapAdapter, MapData};
 pub use map_generator::MapGenerator;
 pub use extents2d::Extents2d;
 pub use rand::GlibcRand;
+
+/// City name data compiled into the library at build time.
+///
+/// A JSON object mapping country names to arrays of city names.
+/// Used by both the `map_generation` binary and the `fmg` CLI.
+pub const CITY_DATA: &str = include_str!("citydata/countrycities.json");

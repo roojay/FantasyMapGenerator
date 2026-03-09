@@ -8,6 +8,7 @@ interface HeaderProps {
   seed: number;
   generationTimeMs: number | null;
   polygonCount: number;
+  usingWasm: boolean;
   onToggleColorScheme: () => void;
   onToggleLanguage: () => void;
 }
@@ -18,6 +19,7 @@ export function Header({
   seed,
   generationTimeMs,
   polygonCount,
+  usingWasm,
   onToggleColorScheme,
   onToggleLanguage,
 }: HeaderProps) {
@@ -47,6 +49,16 @@ export function Header({
         <Badge variant="light" color="violet" size="sm" className="hidden lg:inline-flex">
           {t.header.version}: 0.1.0
         </Badge>
+        <Tooltip label={usingWasm ? t.header.wasmActive : t.header.wasmFallback}>
+          <Badge
+            variant="filled"
+            color={usingWasm ? 'green' : 'orange'}
+            size="sm"
+            className="hidden sm:inline-flex cursor-default"
+          >
+            {usingWasm ? 'WASM' : 'Static'}
+          </Badge>
+        </Tooltip>
       </Group>
 
       <Group gap="xs">

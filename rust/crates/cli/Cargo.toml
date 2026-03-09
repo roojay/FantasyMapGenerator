@@ -1,0 +1,17 @@
+[package]
+name = "fantasy-map-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for the Fantasy Map Generator"
+
+[[bin]]
+name = "fmg"
+path = "src/main.rs"
+
+[dependencies]
+fantasy-map-core = { path = "../core" }
+fantasy-map-renderer-svg = { path = "../renderer-svg" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+anyhow = { workspace = true }

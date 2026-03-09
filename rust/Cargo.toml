@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "fantasy_map_generator",
     "crates/core",
+    "crates/cli",
     "crates/renderer-svg",
     "crates/renderer-wasm",
 ]

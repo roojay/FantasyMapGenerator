@@ -13,7 +13,7 @@ import { getT } from './i18n';
 
 export function App() {
   const store = useMapStore();
-  const { mapData, isLoading, error, generationTimeMs, regenerate } = useMapData(store.config);
+  const { mapData, isLoading, error, generationTimeMs, regenerate, usingWasm } = useMapData(store.config);
   const t = getT(store.language);
 
   const isDark = store.colorScheme === 'dark';
@@ -47,6 +47,7 @@ export function App() {
           seed={store.config.seed}
           generationTimeMs={generationTimeMs}
           polygonCount={polygonCount}
+          usingWasm={usingWasm}
           onToggleColorScheme={store.toggleColorScheme}
           onToggleLanguage={store.toggleLanguage}
         />

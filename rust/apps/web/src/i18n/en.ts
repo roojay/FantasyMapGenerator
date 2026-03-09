@@ -6,6 +6,8 @@ export interface TranslationKeys {
     version: string;
     seed: string;
     ms: string;
+    wasmActive: string;
+    wasmFallback: string;
   };
   config: {
     title: string;
@@ -54,6 +56,8 @@ export const en: TranslationKeys = {
     version: 'Version',
     seed: 'Seed',
     ms: 'ms',
+    wasmActive: 'Live generation via WebAssembly',
+    wasmFallback: 'Using static demo data (run npm run wasm:build to enable live generation)',
   },
   config: {
     title: 'Map Configuration',
