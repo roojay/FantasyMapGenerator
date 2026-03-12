@@ -199,6 +199,26 @@ pub fn run() -> Result<()> {
         }
     }
 
+    // ===================================
+    // 10. 导出 SVG（如果启用了 svg feature）
+    // ===================================
+    #[cfg(feature = "svg")]
+    {
+        if cfg.svg {
+            let svg_file = if cfg.output.ends_with(".json") {
+                cfg.output.replace(".json", "-standard.svg")
+            } else {
+                format!("{}-standard.svg", cfg.output)
+            };
+
+            eprintln!("Exporting standard SVG...");
+            let svg = export_standard_svg(&draw_data)?;
+            std::fs::write(&svg_file, svg)?;
+            eprintln!("Wrote standard SVG to file: {}", svg_file);
+        }
+
+    }
+
     Ok(())
 }
 
@@ -406,4 +426,31 @@ fn render_map(draw_data: &str, output_path: &str) -> Result<()> {
     do_render(draw_data, output_path).map_err(|e| anyhow::anyhow!("渲染失败: {}", e))?;
 
     Ok(())
+}
+
+/// 导出标准风格 SVG
+///
+/// # 参数
+/// * `draw_data` - JSON 格式的绘图数据
+///
+/// # 返回
+/// - `Ok(String)` - SVG 内容
+/// - `Err(...)` - 导出失败
+#[cfg(feature = "svg")]
+fn export_standard_svg(draw_data: &str) -> Result<String> {
+    use crate::standard_svg::build_map_svg;
+
+    // 默认开启所有图层
+    let layers_json = serde_json::json!({
+        "slope": true,
+        "river": true,
+        "contour": true,
+        "border": true,
+        "city": true,
+        "town": true,
+        "label": true
+    })
+    .to_string();
+
+    build_map_svg(draw_data, &layers_json).map_err(|e| anyhow::anyhow!("SVG 导出失败: {}", e))
 }

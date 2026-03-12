@@ -13,11 +13,6 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# 示例输出（保留目录结构，忽略内容）
-examples/*.json
-examples/*.png
-!examples/pkg/
-
 # 临时文件
 *.tmp
 *.bak

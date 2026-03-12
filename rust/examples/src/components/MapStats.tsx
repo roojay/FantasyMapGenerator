@@ -22,7 +22,7 @@ export function MapStats({ mapData }: MapStatsProps) {
     { label: t("stats.cities"), value: cityCount },
     { label: t("stats.towns"), value: townCount },
     { label: t("stats.rivers"), value: riverCount },
-    { label: t("stats.territories"), value: territoryCount }
+    { label: t("stats.territories"), value: territoryCount },
   ];
 
   return (
@@ -30,11 +30,11 @@ export function MapStats({ mapData }: MapStatsProps) {
       <Box
         className={cn(
           "pointer-events-auto rounded-lg border px-3 py-2 shadow-md",
-          "backdrop-blur-xl"
+          "backdrop-blur-xl",
         )}
         style={{
           backgroundColor: "var(--mantine-color-body)",
-          borderColor: "rgb(var(--app-border))"
+          borderColor: "rgb(var(--app-border))",
         }}
       >
         <Box className="grid auto-cols-max grid-flow-col items-center gap-7">
@@ -47,11 +47,7 @@ export function MapStats({ mapData }: MapStatsProps) {
                 />
               )}
               <Box className="flex items-end gap-1.5">
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  className="whitespace-nowrap leading-none"
-                >
+                <Text size="xs" c="dimmed" className="whitespace-nowrap leading-none">
                   {stat.label}
                 </Text>
                 <Text

@@ -23,7 +23,7 @@ export function useMapGenerator() {
 
   useEffect(() => {
     workerRef.current = new Worker(new URL("../workers/mapGenerator.worker.ts", import.meta.url), {
-      type: "module"
+      type: "module",
     });
 
     return () => {
@@ -41,12 +41,14 @@ export function useMapGenerator() {
 
       setIsGenerating(true);
 
-      const handleMessage = (event: MessageEvent<{
-        type: "success" | "error";
-        packet?: MapScenePacket;
-        seed?: number;
-        error?: string;
-      }>) => {
+      const handleMessage = (
+        event: MessageEvent<{
+          type: "success" | "error";
+          packet?: MapScenePacket;
+          seed?: number;
+          error?: string;
+        }>,
+      ) => {
         const { type, packet, seed, error } = event.data;
         workerRef.current?.removeEventListener("message", handleMessage);
         setIsGenerating(false);
@@ -62,7 +64,7 @@ export function useMapGenerator() {
       workerRef.current.addEventListener("message", handleMessage);
       workerRef.current.postMessage({
         type: "generate",
-        ...options
+        ...options,
       });
     });
   }, []);

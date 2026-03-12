@@ -51,7 +51,7 @@ self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
 
     const packet = scenePacketFromWasm({
       metadataJson: wasmPacket.metadata_json,
-      legacyJson: wasmPacket.legacy_json,
+      mapJson: wasmPacket.map_json,
       terrainPositions: wasmPacket.terrain_positions(),
       terrainNormals: wasmPacket.terrain_normals(),
       terrainUvs: wasmPacket.terrain_uvs(),
@@ -80,7 +80,7 @@ self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
       labelAnchors: wasmPacket.label_anchors(),
       labelSizes: wasmPacket.label_sizes(),
       landPolygonPositions: wasmPacket.land_polygon_positions(),
-      landPolygonOffsets: wasmPacket.land_polygon_offsets()
+      landPolygonOffsets: wasmPacket.land_polygon_offsets(),
     });
 
     wasmPacket.free();
@@ -89,13 +89,13 @@ self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
     const response: GenerateResponse = {
       type: "success",
       packet,
-      seed: actualSeed
+      seed: actualSeed,
     };
     workerScope.postMessage(response, packetTransferables(packet));
   } catch (error) {
     const response: GenerateResponse = {
       type: "error",
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     };
     workerScope.postMessage(response);
   }

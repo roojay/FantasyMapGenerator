@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "inter-ui/inter.css";
 
 :root {
   color-scheme: light;
@@ -9,6 +8,12 @@
   --app-text: 15 23 42;
   --app-muted: 100 116 139;
   --app-border: 226 232 240;
+  --app-input-bg: 255 255 255;
+  --app-input-border: 203 213 225;
+  --app-hover-subtle: 241 245 249;
+  --app-accent-hover: 74 144 255;
+  --app-danger-bg: 254 226 226;
+  --app-danger-border: 239 68 68;
 }
 
 [data-mantine-color-scheme="dark"] {
@@ -19,6 +24,12 @@
   --app-text: 241 245 249;
   --app-muted: 148 163 184;
   --app-border: 39 52 69;
+  --app-input-bg: 31 41 55;
+  --app-input-border: 75 85 99;
+  --app-hover-subtle: 31 41 55;
+  --app-accent-hover: 74 144 255;
+  --app-danger-bg: 69 10 10;
+  --app-danger-border: 248 113 113;
 }
 
 html,
@@ -30,7 +41,13 @@ body,
 
 body {
   overflow: hidden;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family:
+    "Inter Variable",
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   color: rgb(var(--app-text));
   background: rgb(var(--app-bg));
 }
@@ -55,6 +72,18 @@ body {
   user-select: none;
   touch-action: none;
   cursor: grab;
+}
+
+.map-stage > svg,
+.map-stage > svg * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.map-stage > svg text,
+.map-stage > svg tspan {
+  pointer-events: none;
 }
 
 .map-stage > canvas:active,
@@ -84,6 +113,14 @@ body {
   background: rgba(var(--app-muted), 0.5);
 }
 
+.panel-control-hover:hover {
+  background-color: rgb(var(--app-hover-subtle));
+}
+
+.layer-toggle-hover:hover {
+  background-color: rgba(var(--app-accent-hover), 0.1);
+}
+
 /* Force cursor pointer on all interactive elements */
 button,
 [role="button"],
@@ -100,7 +137,8 @@ button,
 
 /* Status indicator breathing animation */
 @keyframes breathing {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
@@ -114,8 +152,7 @@ button,
   animation: breathing 2s ease-in-out infinite;
 }
 
-/* Loading overlay fade in */
-@keyframes fadeIn {
+@keyframes loadingOverlayFade {
   from {
     opacity: 0;
   }
@@ -124,23 +161,158 @@ button,
   }
 }
 
-.loading-overlay {
-  animation: fadeIn 0.3s ease-out;
+@keyframes loadingBeamSweep {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.42;
+  }
+  100% {
+    transform: translate3d(560%, 0, 0);
+    opacity: 0;
+  }
 }
 
-/* Spinner rotation */
-@keyframes spin {
+@keyframes loadingSpinnerSpin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.loading-spinner {
-  animation: spin 1s linear infinite;
+@keyframes loadingShellFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes loadingProgressDrift {
+  0% {
+    transform: translateX(-68%);
+  }
+  100% {
+    transform: translateX(168%);
+  }
+}
+
+.app-loading-overlay {
+  animation: loadingOverlayFade 0.28s ease-out;
+}
+
+.app-loading-backdrop {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(245, 230, 189, 0.18), transparent 26%),
+    radial-gradient(circle at 78% 32%, rgba(122, 183, 215, 0.22), transparent 30%),
+    linear-gradient(135deg, rgba(6, 16, 28, 0.72), rgba(10, 36, 57, 0.84));
+  backdrop-filter: blur(14px) saturate(1.12);
+}
+
+.app-loading-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at center, black 42%, transparent 92%);
+}
+
+.app-loading-beam {
+  background: linear-gradient(90deg, transparent, rgba(255, 251, 238, 0.34), transparent);
+  filter: blur(28px);
+  animation: loadingBeamSweep 1.6s ease-in-out infinite;
+}
+
+.app-loading-shell {
+  border-color: rgba(var(--app-border), 0.42);
+  background: linear-gradient(145deg, rgba(248, 244, 233, 0.9), rgba(255, 255, 255, 0.7));
+  box-shadow:
+    0 28px 80px rgba(2, 10, 20, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(24px);
+  animation: loadingShellFloat 2.4s ease-in-out infinite;
+}
+
+.app-loading-edge {
+  background: linear-gradient(90deg, transparent, rgba(212, 176, 98, 0.88), transparent);
+}
+
+.app-loading-orb {
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 255, 255, 0.95),
+    rgba(234, 223, 186, 0.24) 45%,
+    rgba(255, 255, 255, 0.06) 68%,
+    transparent 72%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.app-loading-spinner {
+  border: 3px solid rgba(8, 39, 62, 0.12);
+  border-top-color: rgba(188, 138, 55, 0.96);
+  border-right-color: rgba(45, 123, 160, 0.7);
+  animation: loadingSpinnerSpin 0.95s linear infinite;
+}
+
+.app-loading-kicker {
+  color: rgba(94, 77, 41, 0.72);
+}
+
+.app-loading-progress {
+  background: rgba(15, 23, 42, 0.08);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.app-loading-progress-bar {
+  width: 42%;
+  background: linear-gradient(
+    90deg,
+    rgba(45, 123, 160, 0),
+    rgba(45, 123, 160, 0.9),
+    rgba(212, 176, 98, 0.92),
+    rgba(45, 123, 160, 0)
+  );
+  animation: loadingProgressDrift 1.25s ease-in-out infinite;
+}
+
+.app-loading-caption {
+  color: rgba(15, 23, 42, 0.45);
+}
+
+[data-mantine-color-scheme="dark"] .app-loading-shell {
+  background: linear-gradient(145deg, rgba(14, 23, 35, 0.88), rgba(18, 31, 44, 0.72));
+  box-shadow:
+    0 28px 80px rgba(2, 6, 23, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+[data-mantine-color-scheme="dark"] .app-loading-kicker {
+  color: rgba(245, 216, 154, 0.76);
+}
+
+[data-mantine-color-scheme="dark"] .app-loading-spinner {
+  border-color: rgba(226, 232, 240, 0.14);
+  border-top-color: rgba(245, 216, 154, 0.96);
+  border-right-color: rgba(120, 196, 230, 0.74);
+}
+
+[data-mantine-color-scheme="dark"] .app-loading-progress {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-mantine-color-scheme="dark"] .app-loading-caption {
+  color: rgba(226, 232, 240, 0.52);
 }
 
 @keyframes rendererSwitchPulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.55;
   }
   50% {
@@ -166,7 +338,8 @@ button,
 }
 
 @keyframes rendererSwitchCard {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0);
   }
   50% {
@@ -190,8 +363,7 @@ button,
 
 .renderer-switch-card {
   border: 1px solid rgba(var(--app-border), 0.7);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.56));
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.56));
   box-shadow:
     0 18px 40px rgba(15, 23, 42, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.65);
@@ -200,8 +372,7 @@ button,
 }
 
 [data-mantine-color-scheme="dark"] .renderer-switch-card {
-  background:
-    linear-gradient(135deg, rgba(18, 24, 38, 0.82), rgba(18, 24, 38, 0.62));
+  background: linear-gradient(135deg, rgba(18, 24, 38, 0.82), rgba(18, 24, 38, 0.62));
   box-shadow:
     0 18px 40px rgba(2, 6, 23, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);

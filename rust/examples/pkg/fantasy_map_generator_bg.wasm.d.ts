@@ -3,7 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmrenderpacket_free: (a: number, b: number) => void;
 export const wasmrenderpacket_metadata_json: (a: number) => [number, number];
-export const wasmrenderpacket_legacy_json: (a: number) => [number, number];
+export const wasmrenderpacket_map_json: (a: number) => [number, number];
 export const wasmrenderpacket_terrain_positions: (a: number) => [number, number];
 export const wasmrenderpacket_terrain_normals: (a: number) => [number, number];
 export const wasmrenderpacket_terrain_uvs: (a: number) => [number, number];
@@ -42,9 +42,8 @@ export const wasmmapgenerator_generate_terrain_only: (a: number) => [number, num
 export const wasmmapgenerator_get_seed: (a: number) => number;
 export const wasmmapgenerator_set_draw_scale: (a: number, b: number) => void;
 export const generate_map_simple: (a: number, b: number, c: number) => [number, number, number, number];
-export const build_satellite_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const build_map_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-export const build_satellite_svg_with_options: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const presentation_plugin_metadata_json: () => [number, number, number, number];
 export const init_panic_hook: () => void;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;

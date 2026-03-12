@@ -78,7 +78,7 @@ use crate::utils::rand::GlibcRand;
 /// 地图导出选项
 ///
 /// 控制 `get_draw_data_with_options()` 在导出 JSON 时是否附带附加栅格数据。
-/// 这些栅格数据主要服务于本 fork 的浏览器卫星风格渲染，
+/// 这些栅格数据主要服务于本 fork 的浏览器端高级渲染与调试路径，
 /// 原始 C++ 版本的 `getDrawData()` 只导出矢量绘制数据。
 ///
 /// # 字段说明
@@ -87,7 +87,7 @@ use crate::utils::rand::GlibcRand;
 /// # 使用场景
 /// - CLI 或调试场景：通常保留完整导出
 /// - Web 普通渲染路径：只需要矢量数据，可关闭以减少 WASM 到 JS 的数据传输
-/// - 卫星风格渲染：需要开启以提供地形栅格输入
+/// - 需要额外栅格输入的渲染路径：开启以提供地形相关纹理输入
 ///
 /// # 参考来源
 /// - 原始 C++ 实现: src/mapgenerator.h, getDrawData()
@@ -3273,7 +3273,7 @@ impl MapGenerator {
     /// 返回值：1 = 陆地，0 = 海洋
     ///
     /// # 与原始 C++ 的差异
-    /// 原始 C++ 版本没有这个导出函数；这是本 fork 为浏览器卫星风格渲染
+    /// 原始 C++ 版本没有这个导出函数；这是本 fork 为浏览器端渲染链路
     /// 增加的栅格化输出。由于导出过程会按像素查询最近面，Rust 版本额外使用
     /// `SpatialPointGrid` 缩小候选范围，否则每个像素都线性扫描所有面会非常慢。
     pub fn export_land_mask(&mut self, grid_width: u32, grid_height: u32) -> Vec<u8> {
@@ -3315,7 +3315,7 @@ impl MapGenerator {
     /// 导出精确的陆地面多边形。
     ///
     /// 与 `land_mask` 不同，这里直接复用 Voronoi 面的几何边界，
-    /// 供卫星风格渲染做精确裁剪，确保海岸线与原始矢量地图完全一致。
+    /// 供浏览器端渲染做精确裁剪，确保海岸线与原始矢量地图完全一致。
     pub fn export_land_polygons(&mut self) -> Vec<Vec<f64>> {
         if !self.is_land_face_table_initialized {
             self.init_land_face_table();
@@ -3477,12 +3477,27 @@ impl MapGenerator {
         self.collect_draw_data_with_options(MapExportOptions::default())
     }
 
+    /// 收集核心地图生成结果。
+    ///
+    /// 这是渲染无关的数据出口，供不同 render-data 插件做后续适配。
+    pub fn collect_core_data(&mut self) -> MapDrawData {
+        self.collect_draw_data()
+    }
+
+    /// 按选项收集核心地图生成结果。
+    ///
+    /// 与 `collect_draw_data_with_options()` 语义相同，但名称强调：
+    /// 这里返回的是核心生成层的统一数据，而不是某个具体渲染器的输入格式。
+    pub fn collect_core_data_with_options(&mut self, options: MapExportOptions) -> MapDrawData {
+        self.collect_draw_data_with_options(options)
+    }
+
     /// 获取地图绘图数据，并根据导出选项决定是否附带栅格数据。
     ///
     /// 默认的矢量绘图数据与原始 C++ `getDrawData()` 保持同一职责：
     /// 输出 contour / river / slope / city / town / territory / label。
     /// 本 fork 在此基础上额外支持 heightmap / flux_map / land_mask，
-    /// 但这些字段主要给浏览器卫星风格使用，因此可以按需关闭。
+    /// 但这些字段只在需要栅格输入时才有必要，因此可以按需关闭。
     ///
     /// # 参数
     /// * `options` - 导出控制选项

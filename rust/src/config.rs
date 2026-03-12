@@ -179,6 +179,18 @@ pub struct Config {
     #[cfg(feature = "render")]
     #[arg(long, default_value = "false")]
     pub no_render: bool,
+
+    // ===================================
+    // SVG 导出设置（需要 svg feature）
+    // ===================================
+    /// 导出标准风格 SVG
+    ///
+    /// 如果启用，会额外生成一个标准风格的 SVG 文件。
+    /// 注意：此选项仅在编译时启用 svg feature 时有效。
+    #[cfg(feature = "svg")]
+    #[arg(long, default_value = "false")]
+    pub svg: bool,
+
 }
 
 impl Config {

@@ -5,12 +5,17 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import { FantasyMapThreeRenderer } from "@/lib/FantasyMapThreeRenderer";
 import type {
-  MapLayers,
+  MapPresentationPreset,
   MapScenePacket,
   RenderBackend,
-  RendererPreference,
-  RendererRuntimeBackend
+  RendererRuntimeBackend,
 } from "@/types/map";
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
 
 export interface MapRendererHandle {
   exportToPNG: () => Promise<string>;
@@ -21,8 +26,7 @@ export interface MapRendererHandle {
 
 interface MapRendererProps {
   mapData: MapScenePacket | null;
-  layers: MapLayers;
-  preferredMode: RendererPreference;
+  presentation: MapPresentationPreset;
   onRendererStateChange: (payload: {
     mode: RenderBackend | null;
     actualBackend: RendererRuntimeBackend;
@@ -34,63 +38,75 @@ interface MapRendererProps {
 }
 
 export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(function MapRenderer(
-  { mapData, layers, preferredMode, onRendererStateChange, onRenderComplete, onRenderError, onRendererSwitchStateChange },
-  ref
+  {
+    mapData,
+    presentation,
+    onRendererStateChange,
+    onRenderComplete,
+    onRenderError,
+    onRendererSwitchStateChange,
+  },
+  ref,
 ) {
   const { t } = useTranslation();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<FantasyMapThreeRenderer | null>(null);
-  const renderStateRef = useRef({ mapData, layers });
+  const renderRequestIdRef = useRef(0);
+  const renderStateRef = useRef({ mapData, presentation });
   const callbacksRef = useRef({
     onRendererStateChange,
     onRenderComplete,
     onRenderError,
-    onRendererSwitchStateChange
+    onRendererSwitchStateChange,
   });
   const userAdjustedViewRef = useRef(false);
   const lastAutoFittedPacketRef = useRef<MapScenePacket | null>(null);
   const [switchState, setSwitchState] = useState<{
     active: boolean;
     from: RenderBackend | null;
-    to: RendererPreference;
+    to: MapPresentationPreset["renderer"];
   }>({
     active: false,
     from: null,
-    to: preferredMode
+    to: presentation.renderer,
   });
 
   useEffect(() => {
-    renderStateRef.current = { mapData, layers };
-  }, [layers, mapData]);
+    renderStateRef.current = { mapData, presentation };
+  }, [mapData, presentation]);
 
   useEffect(() => {
     callbacksRef.current = {
       onRendererStateChange,
       onRenderComplete,
       onRenderError,
-      onRendererSwitchStateChange
+      onRendererSwitchStateChange,
     };
   }, [onRenderComplete, onRenderError, onRendererStateChange, onRendererSwitchStateChange]);
 
-  useImperativeHandle(ref, () => ({
-    exportToPNG: async () => {
-      if (!rendererRef.current) throw new Error("Renderer is not ready");
-      return rendererRef.current.exportToPNG();
-    },
-    exportToSVG: async () => {
-      if (!rendererRef.current) throw new Error("Renderer is not ready");
-      return rendererRef.current.buildSVGString();
-    },
-    fitToScreen: () => {
-      userAdjustedViewRef.current = false;
-      rendererRef.current?.fitToScreen();
-    },
-    resetView: () => {
-      userAdjustedViewRef.current = false;
-      rendererRef.current?.resetView();
-    }
-  }), []);
+  useImperativeHandle(
+    ref,
+    () => ({
+      exportToPNG: async () => {
+        if (!rendererRef.current) throw new Error("Renderer is not ready");
+        return rendererRef.current.exportToPNG();
+      },
+      exportToSVG: async () => {
+        if (!rendererRef.current) throw new Error("Renderer is not ready");
+        return rendererRef.current.buildSVGString();
+      },
+      fitToScreen: () => {
+        userAdjustedViewRef.current = false;
+        rendererRef.current?.fitToScreen();
+      },
+      resetView: () => {
+        userAdjustedViewRef.current = false;
+        rendererRef.current?.resetView();
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     if (!stageRef.current) return;
@@ -111,13 +127,20 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
     const markAdjusted = () => {
       userAdjustedViewRef.current = true;
     };
+    const suppressNativeSelection = (event: Event) => {
+      event.preventDefault();
+    };
 
     stage.addEventListener("pointerdown", markAdjusted);
     stage.addEventListener("wheel", markAdjusted, { passive: true });
+    stage.addEventListener("dragstart", suppressNativeSelection);
+    stage.addEventListener("selectstart", suppressNativeSelection);
 
     return () => {
       stage.removeEventListener("pointerdown", markAdjusted);
       stage.removeEventListener("wheel", markAdjusted);
+      stage.removeEventListener("dragstart", suppressNativeSelection);
+      stage.removeEventListener("selectstart", suppressNativeSelection);
     };
   }, []);
 
@@ -126,32 +149,40 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
     if (!renderer) return;
 
     let active = true;
+    const requestId = ++renderRequestIdRef.current;
     const shouldAnimateSwitch = Boolean(renderStateRef.current.mapData && renderer.currentMode);
 
     if (shouldAnimateSwitch) {
       setSwitchState({
         active: true,
         from: renderer.currentMode,
-        to: preferredMode
+        to: presentation.renderer,
       });
       callbacksRef.current.onRendererSwitchStateChange?.(true);
     }
 
     const initializeRenderer = async () => {
       try {
-        const state = await renderer.initialize(preferredMode);
-        if (!active) return;
+        if (shouldAnimateSwitch) {
+          await waitForNextPaint();
+          if (!active || requestId !== renderRequestIdRef.current) return;
+        }
+
+        const state = await renderer.initialize(presentation.renderer);
+        if (!active || requestId !== renderRequestIdRef.current) return;
 
         const currentState = renderStateRef.current;
-        renderer.setLayers(currentState.layers);
+        renderer.setLayers(currentState.presentation.layers);
         callbacksRef.current.onRendererStateChange({
           ...state,
-          actualBackend: renderer.actualBackend
+          actualBackend: renderer.actualBackend,
         });
 
         if (currentState.mapData) {
           renderer.loadMapData(currentState.mapData);
+          renderer.primeSvgMarkup();
           await renderer.render();
+          if (!active || requestId !== renderRequestIdRef.current) return;
           if (lastAutoFittedPacketRef.current !== currentState.mapData) {
             userAdjustedViewRef.current = false;
             renderer.fitToScreen();
@@ -167,12 +198,14 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
           callbacksRef.current.onRendererSwitchStateChange?.(false);
         }
       } catch (error) {
-        if (active) {
+        if (active && requestId === renderRequestIdRef.current) {
           if (shouldAnimateSwitch) {
             setSwitchState((current) => ({ ...current, active: false }));
             callbacksRef.current.onRendererSwitchStateChange?.(false);
           }
-          callbacksRef.current.onRenderError(error instanceof Error ? error.message : String(error));
+          callbacksRef.current.onRenderError(
+            error instanceof Error ? error.message : String(error),
+          );
         }
       }
     };
@@ -182,20 +215,22 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
     return () => {
       active = false;
     };
-  }, [preferredMode]);
+  }, [presentation.renderer]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer?.currentMode || !mapData) return;
 
     let active = true;
+    const requestId = ++renderRequestIdRef.current;
 
     const renderMap = async () => {
       try {
-        renderer.setLayers(layers);
+        renderer.setLayers(presentation.layers);
         renderer.loadMapData(mapData);
+        renderer.primeSvgMarkup();
         await renderer.render();
-        if (!active || !renderer.currentMode) return;
+        if (!active || requestId !== renderRequestIdRef.current || !renderer.currentMode) return;
 
         if (lastAutoFittedPacketRef.current !== mapData) {
           userAdjustedViewRef.current = false;
@@ -204,8 +239,10 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
         }
         callbacksRef.current.onRenderComplete(renderer.currentMode);
       } catch (error) {
-        if (active) {
-          callbacksRef.current.onRenderError(error instanceof Error ? error.message : String(error));
+        if (active && requestId === renderRequestIdRef.current) {
+          callbacksRef.current.onRenderError(
+            error instanceof Error ? error.message : String(error),
+          );
         }
       }
     };
@@ -215,7 +252,7 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
     return () => {
       active = false;
     };
-  }, [layers, mapData]);
+  }, [mapData, presentation.layers]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -234,17 +271,14 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
   }, []);
 
   return (
-    <div
-      ref={wrapperRef}
-      className="h-full w-full overflow-hidden bg-[rgb(var(--app-bg))]"
-    >
+    <div ref={wrapperRef} className="h-full w-full overflow-hidden bg-[rgb(var(--app-bg))]">
       <div ref={stageRef} className={`map-stage h-full w-full ${mapData ? "" : "invisible"}`} />
 
       {mapData && (
         <div
           className={cn(
             "pointer-events-none absolute inset-0 z-20 transition-opacity duration-300",
-            switchState.active ? "opacity-100" : "opacity-0"
+            switchState.active ? "opacity-100" : "opacity-0",
           )}
           aria-hidden={!switchState.active}
         >
@@ -252,7 +286,12 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
           <div className="renderer-switch-beam absolute inset-y-0 -left-1/3 w-1/3" />
           <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-center px-6">
             <div className="renderer-switch-card max-w-sm rounded-2xl px-5 py-4 text-center">
-              <Text size="xs" tt="uppercase" fw={700} className="renderer-switch-kicker tracking-[0.28em]">
+              <Text
+                size="xs"
+                tt="uppercase"
+                fw={700}
+                className="renderer-switch-kicker tracking-[0.28em]"
+              >
                 {t("status.switching")}
               </Text>
               <Text mt={8} size="lg" fw={700}>

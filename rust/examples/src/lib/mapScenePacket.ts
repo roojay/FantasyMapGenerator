@@ -1,9 +1,9 @@
 import type {
-  LegacyMapData,
+  MapExportData,
   MapLabelRenderItem,
   MapSceneMetadata,
   MapScenePacket,
-  PathLayerPacket
+  PathLayerPacket,
 } from "@/types/map";
 
 const TERRAIN_ELEVATION_SCALE = 64;
@@ -15,7 +15,7 @@ const textDecoder = new TextDecoder();
 
 interface WasmPacketWire {
   metadataJson: string;
-  legacyJson: string;
+  mapJson: string;
   terrainPositions: Float32Array;
   terrainNormals: Float32Array;
   terrainUvs: Float32Array;
@@ -80,7 +80,7 @@ function sampleElevation(
   width: number,
   height: number,
   normalizedX: number,
-  normalizedTopY: number
+  normalizedTopY: number,
 ) {
   const sampleX = Math.max(0, Math.min(width - 1, normalizedX * (width - 1)));
   const sampleY = Math.max(0, Math.min(height - 1, normalizedTopY * (height - 1)));
@@ -101,18 +101,24 @@ function sampleElevation(
 
 function terrainElevation(height: number, isLand: boolean) {
   if (isLand) {
-    return ((Math.pow(Math.max(0, Math.min(1, height)), 1.12) * 0.9) + 0.04) * TERRAIN_ELEVATION_SCALE;
+    return (
+      (Math.pow(Math.max(0, Math.min(1, height)), 1.12) * 0.9 + 0.04) * TERRAIN_ELEVATION_SCALE
+    );
   }
 
   return -WATER_DEPTH_SCALE + Math.max(0, Math.min(1, height)) * (WATER_DEPTH_SCALE * 0.35);
 }
 
-function lerpColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+function lerpColor(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number,
+): [number, number, number] {
   const clamped = Math.max(0, Math.min(1, t));
   return [
     Math.round(a[0] + (b[0] - a[0]) * clamped),
     Math.round(a[1] + (b[1] - a[1]) * clamped),
-    Math.round(a[2] + (b[2] - a[2]) * clamped)
+    Math.round(a[2] + (b[2] - a[2]) * clamped),
   ];
 }
 
@@ -151,7 +157,7 @@ function colorizeLand(height: number, flux: number, coast: number): [number, num
   return lerpColor(
     lerpColor(base, riverTint, Math.max(0, Math.min(0.8, flux * 1.6))),
     coastTint,
-    Math.max(0, Math.min(0.35, coast * 0.35))
+    Math.max(0, Math.min(0.35, coast * 0.35)),
   );
 }
 
@@ -165,7 +171,7 @@ function buildPathLayer(
   paths: number[][],
   metadata: MapSceneMetadata,
   elevations: Float32Array,
-  yOffset: number
+  yOffset: number,
 ): PathLayerPacket {
   const positions: number[] = [];
   const offsets = new Uint32Array(paths.length + 1);
@@ -176,8 +182,9 @@ function buildPathLayer(
       const y = path[index + 1] ?? 0;
       positions.push(
         (x - 0.5) * metadata.imageWidth,
-        sampleElevation(elevations, metadata.terrainWidth, metadata.terrainHeight, x, 1 - y) + yOffset,
-        (y - 0.5) * metadata.imageHeight
+        sampleElevation(elevations, metadata.terrainWidth, metadata.terrainHeight, x, 1 - y) +
+          yOffset,
+        (y - 0.5) * metadata.imageHeight,
       );
     }
     offsets[pathIndex + 1] = positions.length / 3;
@@ -185,7 +192,7 @@ function buildPathLayer(
 
   return {
     positions: new Float32Array(positions),
-    offsets
+    offsets,
   };
 }
 
@@ -193,7 +200,7 @@ function buildPointPositions(
   points: number[],
   metadata: MapSceneMetadata,
   elevations: Float32Array,
-  yOffset: number
+  yOffset: number,
 ) {
   const positions = new Float32Array((points.length / 2) * 3);
   for (let index = 0; index < points.length; index += 2) {
@@ -202,13 +209,18 @@ function buildPointPositions(
     const targetIndex = (index / 2) * 3;
     positions[targetIndex] = (x - 0.5) * metadata.imageWidth;
     positions[targetIndex + 1] =
-      sampleElevation(elevations, metadata.terrainWidth, metadata.terrainHeight, x, 1 - y) + yOffset;
+      sampleElevation(elevations, metadata.terrainWidth, metadata.terrainHeight, x, 1 - y) +
+      yOffset;
     positions[targetIndex + 2] = (y - 0.5) * metadata.imageHeight;
   }
   return positions;
 }
 
-function buildLabelBuffers(data: LegacyMapData, metadata: MapSceneMetadata, elevations: Float32Array) {
+function buildLabelBuffers(
+  data: MapExportData,
+  metadata: MapSceneMetadata,
+  elevations: Float32Array,
+) {
   const bytes: number[] = [];
   const offsets = new Uint32Array(data.label.length + 1);
   const anchors = new Float32Array(data.label.length * 3);
@@ -226,14 +238,14 @@ function buildLabelBuffers(data: LegacyMapData, metadata: MapSceneMetadata, elev
         metadata.terrainWidth,
         metadata.terrainHeight,
         label.position[0],
-        1 - label.position[1]
+        1 - label.position[1],
       ) + LABEL_HEIGHT_OFFSET;
     anchors[index * 3 + 2] = (label.position[1] - 0.5) * metadata.imageHeight;
     sizes[index] = label.fontsize;
     items[index] = {
       fontface: label.fontface,
       fontsize: label.fontsize,
-      text: label.text
+      text: label.text,
     };
   });
 
@@ -242,7 +254,7 @@ function buildLabelBuffers(data: LegacyMapData, metadata: MapSceneMetadata, elev
     offsets,
     anchors,
     sizes,
-    items
+    items,
   };
 }
 
@@ -250,13 +262,13 @@ function decodeLabelItems(
   bytes: Uint8Array,
   offsets: Uint32Array,
   sizes: Float32Array,
-  legacyData?: Pick<LegacyMapData, "label"> | null
+  mapData: Pick<MapExportData, "label">,
 ) {
-  if (legacyData?.label && Array.isArray(legacyData.label)) {
-    return legacyData.label.map<MapLabelRenderItem>((label) => ({
+  if (Array.isArray(mapData.label)) {
+    return mapData.label.map<MapLabelRenderItem>((label) => ({
       fontface: label.fontface,
       fontsize: label.fontsize,
-      text: label.text
+      text: label.text,
     }));
   }
 
@@ -265,27 +277,16 @@ function decodeLabelItems(
     items.push({
       fontface: "Times New Roman",
       fontsize: sizes[index] ?? 12,
-      text: textDecoder.decode(bytes.subarray(offsets[index], offsets[index + 1]))
+      text: textDecoder.decode(bytes.subarray(offsets[index], offsets[index + 1])),
     });
   }
   return items;
 }
 
-function parseLegacyMapDataSafe(legacyJson?: string | null) {
-  if (!legacyJson) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(legacyJson) as LegacyMapData;
-  } catch {
-    return null;
-  }
-}
-
 function buildLandPolygonBuffers(polygons?: number[][] | null) {
   const validPolygons = (polygons ?? []).filter(
-    (polygon): polygon is number[] => Array.isArray(polygon) && polygon.length >= 6 && polygon.length % 2 === 0
+    (polygon): polygon is number[] =>
+      Array.isArray(polygon) && polygon.length >= 6 && polygon.length % 2 === 0,
   );
   const totalValues = validPolygons.reduce((sum, polygon) => sum + polygon.length, 0);
   const positions = new Float32Array(totalValues);
@@ -301,7 +302,7 @@ function buildLandPolygonBuffers(polygons?: number[][] | null) {
   return { positions, offsets };
 }
 
-function buildLegacyTerrain(data: LegacyMapData) {
+function buildExportTerrain(data: MapExportData) {
   const rasterWidth = data.heightmap?.width ?? 2;
   const rasterHeight = data.heightmap?.height ?? 2;
   const heightTop = data.heightmap
@@ -422,14 +423,14 @@ function buildLegacyTerrain(data: LegacyMapData) {
       positions,
       normals,
       uvs,
-      indices
+      indices,
     },
     textures: {
       height: heightTexture,
       landMask: landMaskTexture,
       flux: fluxTexture,
-      albedo: albedoTexture
-    }
+      albedo: albedoTexture,
+    },
   };
 }
 
@@ -457,7 +458,7 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
     packet.labels.anchors.buffer,
     packet.labels.sizes.buffer,
     packet.landPolygonPositions.buffer,
-    packet.landPolygonOffsets.buffer
+    packet.landPolygonOffsets.buffer,
   ];
 
   if (packet.textures.terrainAlbedo) transferables.push(packet.textures.terrainAlbedo.buffer);
@@ -471,7 +472,7 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
 }
 
 export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
-  const legacyData = parseLegacyMapDataSafe(wire.legacyJson);
+  const mapData = JSON.parse(wire.mapJson) as MapExportData;
   const rawMetadata = JSON.parse(wire.metadataJson) as {
     image_width: number;
     image_height: number;
@@ -497,7 +498,7 @@ export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
     townCount: rawMetadata.town_count,
     riverCount: rawMetadata.river_count,
     territoryCount: rawMetadata.territory_count,
-    labelCount: rawMetadata.label_count
+    labelCount: rawMetadata.label_count,
   };
 
   return {
@@ -506,7 +507,7 @@ export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
       positions: wire.terrainPositions,
       normals: wire.terrainNormals,
       uvs: wire.terrainUvs,
-      indices: wire.terrainIndices
+      indices: wire.terrainIndices,
     },
     textures: {
       height: wire.heightTexture,
@@ -518,43 +519,42 @@ export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
       ao: wire.aoTexture,
       waterColor: wire.waterColorTexture,
       waterAlpha: wire.waterAlphaTexture,
-      coastGlow: wire.coastGlowTexture
+      coastGlow: wire.coastGlowTexture,
     },
     layers: {
       slopeSegments: wire.slopeSegments,
       river: {
         positions: wire.riverPositions,
-        offsets: wire.riverOffsets
+        offsets: wire.riverOffsets,
       },
       contour: {
         positions: wire.contourPositions,
-        offsets: wire.contourOffsets
+        offsets: wire.contourOffsets,
       },
       border: {
         positions: wire.borderPositions,
-        offsets: wire.borderOffsets
-      }
+        offsets: wire.borderOffsets,
+      },
     },
     markers: {
       city: wire.cityPositions,
-      town: wire.townPositions
+      town: wire.townPositions,
     },
     labels: {
       bytes: wire.labelBytes,
       offsets: wire.labelOffsets,
       anchors: wire.labelAnchors,
       sizes: wire.labelSizes,
-      items: decodeLabelItems(wire.labelBytes, wire.labelOffsets, wire.labelSizes, legacyData)
+      items: decodeLabelItems(wire.labelBytes, wire.labelOffsets, wire.labelSizes, mapData),
     },
     landPolygonPositions: wire.landPolygonPositions,
     landPolygonOffsets: wire.landPolygonOffsets,
-    source: "wasm",
-    legacyJson: wire.legacyJson
+    mapJson: wire.mapJson,
   };
 }
 
-export function compileLegacyMapData(data: LegacyMapData, legacyJson?: string | null): MapScenePacket {
-  const terrainBundle = buildLegacyTerrain(data);
+export function compileMapExportData(data: MapExportData, mapJson?: string): MapScenePacket {
+  const terrainBundle = buildExportTerrain(data);
   const landPolygonBuffers = buildLandPolygonBuffers(data.land_polygons);
   const metadata: MapSceneMetadata = {
     imageWidth: data.image_width,
@@ -567,7 +567,7 @@ export function compileLegacyMapData(data: LegacyMapData, legacyJson?: string | 
     townCount: data.town.length / 2,
     riverCount: data.river.length,
     territoryCount: data.territory.length,
-    labelCount: data.label.length
+    labelCount: data.label.length,
   };
 
   const slopeSegments = new Float32Array((data.slope.length / 4) * 6);
@@ -584,7 +584,7 @@ export function compileLegacyMapData(data: LegacyMapData, legacyJson?: string | 
         metadata.terrainWidth,
         metadata.terrainHeight,
         x1,
-        1 - y1
+        1 - y1,
       ) + OVERLAY_HEIGHT_OFFSET;
     slopeSegments[targetIndex + 2] = (y1 - 0.5) * metadata.imageHeight;
     slopeSegments[targetIndex + 3] = (x2 - 0.5) * metadata.imageWidth;
@@ -594,7 +594,7 @@ export function compileLegacyMapData(data: LegacyMapData, legacyJson?: string | 
         metadata.terrainWidth,
         metadata.terrainHeight,
         x2,
-        1 - y2
+        1 - y2,
       ) + OVERLAY_HEIGHT_OFFSET;
     slopeSegments[targetIndex + 5] = (y2 - 0.5) * metadata.imageHeight;
   }
@@ -607,22 +607,41 @@ export function compileLegacyMapData(data: LegacyMapData, legacyJson?: string | 
     textures: terrainBundle.textures,
     layers: {
       slopeSegments,
-      river: buildPathLayer(data.river, metadata, terrainBundle.elevations, OVERLAY_HEIGHT_OFFSET + 0.5),
-      contour: buildPathLayer(data.contour, metadata, terrainBundle.elevations, OVERLAY_HEIGHT_OFFSET),
-      border: buildPathLayer(data.territory, metadata, terrainBundle.elevations, OVERLAY_HEIGHT_OFFSET + 0.25)
+      river: buildPathLayer(
+        data.river,
+        metadata,
+        terrainBundle.elevations,
+        OVERLAY_HEIGHT_OFFSET + 0.5,
+      ),
+      contour: buildPathLayer(
+        data.contour,
+        metadata,
+        terrainBundle.elevations,
+        OVERLAY_HEIGHT_OFFSET,
+      ),
+      border: buildPathLayer(
+        data.territory,
+        metadata,
+        terrainBundle.elevations,
+        OVERLAY_HEIGHT_OFFSET + 0.25,
+      ),
     },
     markers: {
       city: buildPointPositions(data.city, metadata, terrainBundle.elevations, LABEL_HEIGHT_OFFSET),
-      town: buildPointPositions(data.town, metadata, terrainBundle.elevations, LABEL_HEIGHT_OFFSET - 0.7)
+      town: buildPointPositions(
+        data.town,
+        metadata,
+        terrainBundle.elevations,
+        LABEL_HEIGHT_OFFSET - 0.7,
+      ),
     },
     labels,
     landPolygonPositions: landPolygonBuffers.positions,
     landPolygonOffsets: landPolygonBuffers.offsets,
-    source: "legacy-json",
-    legacyJson: legacyJson ?? JSON.stringify(data)
+    mapJson: mapJson ?? JSON.stringify(data),
   };
 }
 
-export function parseLegacyMapJson(json: string) {
-  return compileLegacyMapData(JSON.parse(json) as LegacyMapData, json);
+export function parseMapExportJson(json: string) {
+  return compileMapExportData(JSON.parse(json) as MapExportData, json);
 }

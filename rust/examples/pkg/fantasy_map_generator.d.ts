@@ -24,7 +24,7 @@ export class WasmMapGenerator {
      * # 参数
      * * `num_cities` - 城市数量
      * * `num_towns` - 城镇数量
-     * * `include_raster_data` - 是否导出供卫星风格渲染使用的栅格数据
+     * * `include_raster_data` - 是否导出附加栅格数据
      *
      * # 与原始 C++ 的差异
      * 原始 C++ 版本没有 WASM 导出层，也没有“按需导出栅格”的调用入口。
@@ -33,7 +33,7 @@ export class WasmMapGenerator {
      *
      * # 性能说明
      * 普通矢量渲染可将 `include_raster_data` 设为 `false`，
-     * 只有卫星风格或调试栅格数据时才需要导出附加数组。
+     * 仅在需要额外栅格数据时再开启。
      */
     generate_with_options(num_cities: number, num_towns: number, include_raster_data: boolean): string;
     /**
@@ -89,7 +89,7 @@ export class WasmRenderPacket {
     town_positions(): Float32Array;
     water_alpha_texture(): Uint8Array;
     water_color_texture(): Uint8Array;
-    readonly legacy_json: string;
+    readonly map_json: string;
     readonly metadata_json: string;
 }
 
@@ -97,16 +97,6 @@ export class WasmRenderPacket {
  * 根据导出的地图 JSON 和图层配置在 Rust 侧生成标准原始地图 SVG。
  */
 export function build_map_svg(map_json: string, layers_json: string): string;
-
-/**
- * 根据导出的地图 JSON 和图层配置直接在 Rust 侧生成卫星风格 SVG。
- */
-export function build_satellite_svg(map_json: string, layers_json: string): string;
-
-/**
- * 根据导出的地图 JSON、图层配置和优化选项生成卫星风格 SVG。
- */
-export function build_satellite_svg_with_options(map_json: string, layers_json: string, options_json: string): string;
 
 /**
  * 简化的地图生成函数（用于快速测试）
@@ -118,13 +108,18 @@ export function generate_map_simple(seed: number, width: number, height: number)
  */
 export function init_panic_hook(): void;
 
+/**
+ * 返回 presentation 插件的统一 capability/config metadata。
+ */
+export function presentation_plugin_metadata_json(): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmrenderpacket_free: (a: number, b: number) => void;
     readonly wasmrenderpacket_metadata_json: (a: number) => [number, number];
-    readonly wasmrenderpacket_legacy_json: (a: number) => [number, number];
+    readonly wasmrenderpacket_map_json: (a: number) => [number, number];
     readonly wasmrenderpacket_terrain_positions: (a: number) => [number, number];
     readonly wasmrenderpacket_terrain_normals: (a: number) => [number, number];
     readonly wasmrenderpacket_terrain_uvs: (a: number) => [number, number];
@@ -163,9 +158,8 @@ export interface InitOutput {
     readonly wasmmapgenerator_get_seed: (a: number) => number;
     readonly wasmmapgenerator_set_draw_scale: (a: number, b: number) => void;
     readonly generate_map_simple: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly build_satellite_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_map_svg: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly build_satellite_svg_with_options: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly presentation_plugin_metadata_json: () => [number, number, number, number];
     readonly init_panic_hook: () => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

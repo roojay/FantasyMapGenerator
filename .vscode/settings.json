@@ -1,3 +1,9 @@
 {
-    "typescript.autoClosingTags": false
+    "typescript.autoClosingTags": false,
+    "rust-analyzer.linkedProjects": [
+        "rust/Cargo.toml"
+    ],
+    "rust-analyzer.cargo.features": [
+        "wasm"
+    ]
 }

@@ -8,7 +8,7 @@ import {
   Slider,
   Stack,
   Text,
-  Tooltip
+  Tooltip,
 } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -27,20 +27,22 @@ const presets = [
   { label: "1080p", width: 1920, height: 1080 },
   { label: "1440p", width: 2560, height: 1440 },
   { label: "4K", width: 3840, height: 2160 },
-  { label: "8K", width: 7680, height: 4320 }
+  { label: "8K", width: 7680, height: 4320 },
 ];
 
 export function ControlPanel({
   config,
   isBusy,
   onConfigChange,
-  onGenerate
+  onGenerate,
 }: ControlPanelProps) {
   const { t } = useTranslation();
 
   return (
-    <Box className="grid h-full grid-rows-[auto_1fr_auto]" style={{ backgroundColor: "var(--mantine-color-body)" }}>
-      {/* Header */}
+    <Box
+      className="grid h-full grid-rows-[auto_1fr_auto]"
+      style={{ backgroundColor: "var(--mantine-color-body)" }}
+    >
       <Box className="border-b px-4 py-4" style={{ borderColor: "rgb(var(--app-border))" }}>
         <Text fw={700} size="lg">
           {t("app.title")}
@@ -50,23 +52,16 @@ export function ControlPanel({
         </Text>
       </Box>
 
-      {/* Scrollable controls */}
       <Box className="overflow-y-auto px-3 py-3 sidebar-scroll">
         <Accordion
           defaultValue={["map", "locations", "rendering"]}
           multiple
           variant="separated"
           classNames={{
-            item: cn(
-              "border-b border-[rgb(var(--app-border))]",
-              "rounded-lg overflow-hidden"
-            ),
-            control: cn(
-              "hover:bg-[var(--mantine-color-gray-1)] dark:hover:bg-[var(--mantine-color-gray-8)]",
-              "transition-colors duration-200"
-            ),
+            item: cn("border-b border-[rgb(var(--app-border))]", "rounded-lg overflow-hidden"),
+            control: cn("panel-control-hover", "transition-colors duration-200"),
             label: "text-xs font-semibold uppercase tracking-wider",
-            chevron: "text-[rgb(var(--app-muted))]"
+            chevron: "text-[rgb(var(--app-muted))]",
           }}
         >
           <Accordion.Item value="map">
@@ -84,7 +79,9 @@ export function ControlPanel({
                         color="gray"
                         size="sm"
                         className="cursor-pointer"
-                        onClick={() => onConfigChange("seed", Math.floor(Math.random() * 999999) + 1)}
+                        onClick={() =>
+                          onConfigChange("seed", Math.floor(Math.random() * 999999) + 1)
+                        }
                       >
                         <IconRefresh size={14} />
                       </ActionIcon>
@@ -98,11 +95,11 @@ export function ControlPanel({
                     clampBehavior="strict"
                     classNames={{
                       input: cn(
-                        "bg-white dark:bg-gray-800",
-                        "border-gray-300 dark:border-gray-600",
+                        "bg-[rgb(var(--app-input-bg))]",
+                        "border-[rgb(var(--app-input-border))]",
                         "focus:border-brand-5 focus:ring-2 focus:ring-brand-5/20",
-                        "transition-all duration-200"
-                      )
+                        "transition-all duration-200",
+                      ),
                     }}
                     onChange={(value) => onConfigChange("seed", Number(value) || 0)}
                   />
@@ -139,8 +136,8 @@ export function ControlPanel({
                         classNames={{
                           root: cn(
                             "hover:scale-105 active:scale-95",
-                            "transition-transform duration-200"
-                          )
+                            "transition-transform duration-200",
+                          ),
                         }}
                         onClick={() => {
                           onConfigChange("width", preset.width);
@@ -163,7 +160,12 @@ export function ControlPanel({
                       color="gray"
                       size="sm"
                       className="cursor-pointer"
-                      onClick={() => onConfigChange("resolution", Number((Math.random() * 0.19 + 0.01).toFixed(2)))}
+                      onClick={() =>
+                        onConfigChange(
+                          "resolution",
+                          Number((Math.random() * 0.19 + 0.01).toFixed(2)),
+                        )
+                      }
                     >
                       <IconRefresh size={14} />
                     </ActionIcon>
@@ -197,7 +199,12 @@ export function ControlPanel({
                       {config.cities}
                     </Text>
                   </Group>
-                  <Slider min={0} max={20} value={config.cities} onChange={(value) => onConfigChange("cities", value)} />
+                  <Slider
+                    min={0}
+                    max={20}
+                    value={config.cities}
+                    onChange={(value) => onConfigChange("cities", value)}
+                  />
                 </div>
 
                 <div>
@@ -209,7 +216,12 @@ export function ControlPanel({
                       {config.towns}
                     </Text>
                   </Group>
-                  <Slider min={0} max={50} value={config.towns} onChange={(value) => onConfigChange("towns", value)} />
+                  <Slider
+                    min={0}
+                    max={50}
+                    value={config.towns}
+                    onChange={(value) => onConfigChange("towns", value)}
+                  />
                 </div>
               </Stack>
             </Accordion.Panel>
@@ -236,13 +248,13 @@ export function ControlPanel({
                     onChange={(value) => onConfigChange("drawScale", value)}
                   />
                 </div>
+
               </Stack>
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>
       </Box>
 
-      {/* Action button */}
       <Box className="px-3 pb-6 pt-3">
         <Button
           size="xss"
@@ -253,8 +265,8 @@ export function ControlPanel({
             root: cn(
               "shadow-md hover:shadow-lg",
               "hover:scale-[1.02] active:scale-[0.98]",
-              "transition-all duration-200"
-            )
+              "transition-all duration-200",
+            ),
           }}
           onClick={() => onGenerate()}
         >

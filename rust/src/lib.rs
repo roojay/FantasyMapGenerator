@@ -120,16 +120,15 @@ pub mod cli;
 #[cfg(feature = "render")]
 pub mod render;
 
+/// 渲染数据插件层
+pub mod presentation;
+
 /// WASM 绑定模块（需要 wasm feature）
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-/// 卫星风格 SVG 生成模块（需要 wasm feature）
-#[cfg(feature = "wasm")]
-pub mod satellite_svg;
-
-/// 标准地图 SVG 生成模块（需要 wasm feature）
-#[cfg(feature = "wasm")]
+/// 标准地图 SVG 生成模块（需要 svg feature）
+#[cfg(feature = "svg")]
 pub mod standard_svg;
 
 // ===================================

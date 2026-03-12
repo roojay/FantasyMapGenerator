@@ -1,7 +1,18 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
-import { ActionIcon, Box, Drawer, MantineProvider, Tooltip, useMantineColorScheme } from "@mantine/core";
+import {
+  ActionIcon,
+  Box,
+  Drawer,
+  MantineProvider,
+  Tooltip,
+  useMantineColorScheme,
+} from "@mantine/core";
 import { useDisclosure, useLocalStorage } from "@mantine/hooks";
-import { IconAdjustmentsHorizontal, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand } from "@tabler/icons-react";
+import {
+  IconAdjustmentsHorizontal,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
+} from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
 import { ControlPanel } from "@/components/ControlPanel";
@@ -14,23 +25,30 @@ import { TopToolbar } from "@/components/TopToolbar";
 import { cn } from "@/lib/cn";
 import { downloadBlob, downloadDataUrl } from "@/lib/download";
 import "@/lib/i18n";
-import { parseLegacyMapJson } from "@/lib/mapScenePacket";
+import { parseMapExportJson } from "@/lib/mapScenePacket";
+import {
+  buildPresentationExportSlug,
+  createDefaultPresentationPreset,
+  parseStoredPresentationPreset,
+  PRESENTATION_PRESET_STORAGE_KEY,
+  serializePresentationPreset,
+} from "@/lib/presentationPreset";
 import {
   APP_LANGUAGE_STORAGE_KEY,
   deserializeAppLanguage,
   getBrowserLanguage,
-  serializeAppLanguage
+  serializeAppLanguage,
 } from "@/lib/language";
 import { useMapGenerator } from "@/hooks/useMapGenerator";
 import { colorSchemeManager, cssVariablesResolver, theme } from "@/theme";
 import type {
   AppLanguage,
   MapConfig,
-  MapLayers,
+  MapPresentationPreset,
   MapScenePacket,
   RenderBackend,
   RendererRuntimeBackend,
-  StatusMessage
+  StatusMessage,
 } from "@/types/map";
 
 const defaultConfig: MapConfig = {
@@ -41,18 +59,18 @@ const defaultConfig: MapConfig = {
   cities: 5,
   towns: 10,
   drawScale: 1,
-  renderer: "auto"
 };
 
-const defaultLayers: MapLayers = {
-  slope: true,
-  river: true,
-  contour: true,
-  border: true,
-  city: true,
-  town: true,
-  label: true
-};
+interface BlockingTaskState {
+  message: string;
+  detail: string;
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
 
 function AppContent() {
   const { t, i18n } = useTranslation();
@@ -62,25 +80,30 @@ function AppContent() {
   const { generate: generateMap } = useMapGenerator();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [mobilePanelOpened, { open: openMobilePanel, close: closeMobilePanel }] = useDisclosure(false);
+  const [mobilePanelOpened, { open: openMobilePanel, close: closeMobilePanel }] =
+    useDisclosure(false);
   const [language, setLanguage] = useLocalStorage<AppLanguage>({
     key: APP_LANGUAGE_STORAGE_KEY,
     defaultValue: getBrowserLanguage(),
     getInitialValueInEffect: false,
     deserialize: deserializeAppLanguage,
-    serialize: serializeAppLanguage
+    serialize: serializeAppLanguage,
   });
 
   const [config, setConfig] = useState(defaultConfig);
-  const [layers, setLayers] = useState(defaultLayers);
+  const [presentation, setPresentation] = useState<MapPresentationPreset | null>(null);
   const [mapData, setMapData] = useState<MapScenePacket | null>(null);
-  const [mapJson, setMapJson] = useState<string | null>(null);
   const [availableModes, setAvailableModes] = useState<RenderBackend[]>(["svg"]);
   const [renderMode, setRenderMode] = useState<RenderBackend | null>(null);
   const [actualBackend, setActualBackend] = useState<RendererRuntimeBackend>("unknown");
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [rendererSwitching, setRendererSwitching] = useState(false);
-  const [status, setStatus] = useState<StatusMessage>({ tone: "neutral", text: t("status.booting") });
+  const [blockingTask, setBlockingTask] = useState<BlockingTaskState | null>(null);
+  const [status, setStatus] = useState<StatusMessage>({
+    tone: "neutral",
+    text: t("status.booting"),
+  });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,19 +117,58 @@ function AppContent() {
   useEffect(() => {
     // Worker 会自动初始化 WASM
     setStatus({ tone: "success", text: t("status.wasmReady") });
-  }, [t]);
-
-  const updateConfig = useCallback(<Key extends keyof MapConfig>(key: Key, value: MapConfig[Key]) => {
-    setConfig((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const updateLayer = useCallback(<Key extends keyof MapLayers>(key: Key, value: MapLayers[Key]) => {
-    setLayers((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    const storedValue =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(PRESENTATION_PRESET_STORAGE_KEY)
+        : null;
+    const parsedStored = parseStoredPresentationPreset(storedValue);
+    setPresentation(parsedStored ?? createDefaultPresentationPreset());
+  }, [t]);
+
+  useEffect(() => {
+    if (!presentation || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      PRESENTATION_PRESET_STORAGE_KEY,
+      serializePresentationPreset(presentation),
+    );
+  }, [presentation]);
+
+  const updateConfig = useCallback(
+    <Key extends keyof MapConfig>(key: Key, value: MapConfig[Key]) => {
+      setConfig((current) => ({ ...current, [key]: value }));
+    },
+    [],
+  );
+
+  const updatePresentation = useCallback(
+    <Key extends keyof MapPresentationPreset>(key: Key, value: MapPresentationPreset[Key]) => {
+      setPresentation((current) => (current ? { ...current, [key]: value } : current));
+    },
+    [],
+  );
+
+  const updateLayer = useCallback((key: keyof MapPresentationPreset["layers"], value: boolean) => {
+    setPresentation((current) =>
+      current
+        ? {
+            ...current,
+            layers: {
+              ...current.layers,
+              [key]: value,
+            },
+          }
+        : current,
+    );
   }, []);
 
   const hydrateMap = useCallback((packet: MapScenePacket) => {
     startTransition(() => {
-      setMapJson(packet.legacyJson ?? null);
       setMapData(packet);
     });
   }, []);
@@ -115,6 +177,10 @@ function AppContent() {
     setLoading(true);
     setError(null);
     setStatus({ tone: "neutral", text: t("status.generating") });
+    setBlockingTask({
+      message: t("status.generating"),
+      detail: t("messages.generatingHint"),
+    });
 
     try {
       const result = await generateMap({
@@ -124,17 +190,23 @@ function AppContent() {
         resolution: config.resolution,
         drawScale: config.drawScale,
         cities: config.cities,
-        towns: config.towns
+        towns: config.towns,
       });
 
       setConfig((current) => ({ ...current, seed: result.seed }));
       hydrateMap(result.packet);
       setStatus({ tone: "neutral", text: t("status.rendering") });
+      setBlockingTask({
+        message: t("status.rendering"),
+        detail: t("messages.renderingHint"),
+      });
     } catch (cause) {
-      setError(t("errors.generator", { message: cause instanceof Error ? cause.message : String(cause) }));
-      setStatus({ tone: "error", text: t("status.ready") });
-    } finally {
       setLoading(false);
+      setBlockingTask(null);
+      setError(
+        t("errors.generator", { message: cause instanceof Error ? cause.message : String(cause) }),
+      );
+      setStatus({ tone: "error", text: t("status.ready") });
     }
   }, [config, generateMap, hydrateMap, t]);
 
@@ -142,69 +214,117 @@ function AppContent() {
     await generateMapData();
   }, [generateMapData]);
 
-  const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleImportFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
 
-    setLoading(true);
-    setError(null);
-    setStatus({ tone: "neutral", text: t("status.importing") });
+      setLoading(true);
+      setError(null);
+      setStatus({ tone: "neutral", text: t("status.importing") });
+      setBlockingTask({
+        message: t("status.importing"),
+        detail: t("messages.importingHint"),
+      });
 
-    try {
-      const json = await file.text();
-      hydrateMap(parseLegacyMapJson(json));
-      setStatus({ tone: "neutral", text: t("status.rendering") });
-    } catch (cause) {
-      setError(t("errors.import", { message: cause instanceof Error ? cause.message : String(cause) }));
-      setStatus({ tone: "error", text: t("status.ready") });
-    } finally {
-      setLoading(false);
-      event.target.value = "";
-    }
-  }, [hydrateMap, t]);
-
-  const handleExport = useCallback(async (format: "json" | "png" | "svg") => {
-    try {
-      if (!mapData || !mapJson) return;
-
-      if (format === "json") {
-        downloadBlob(new Blob([mapJson], { type: "application/json" }), `fantasy_map_${Date.now()}.json`);
-        setStatus({ tone: "success", text: t("status.exported") });
-        return;
+      try {
+        const json = await file.text();
+        hydrateMap(parseMapExportJson(json));
+        setStatus({ tone: "neutral", text: t("status.rendering") });
+        setBlockingTask({
+          message: t("status.rendering"),
+          detail: t("messages.renderingHint"),
+        });
+      } catch (cause) {
+        setLoading(false);
+        setBlockingTask(null);
+        setError(
+          t("errors.import", { message: cause instanceof Error ? cause.message : String(cause) }),
+        );
+        setStatus({ tone: "error", text: t("status.ready") });
+      } finally {
+        event.target.value = "";
       }
+    },
+    [hydrateMap, t],
+  );
 
-      if (format === "png") {
-        const png = await rendererRef.current?.exportToPNG();
-        if (!png) throw new Error("Renderer is not ready");
+  const handleExport = useCallback(
+    async (format: "json" | "png" | "svg") => {
+      try {
+        if (!mapData) return;
+        if (!presentation) return;
+        const exportSlug = buildPresentationExportSlug(presentation);
+        const exportTimestamp = Date.now();
+        const exportLabel = format.toUpperCase();
 
-        downloadDataUrl(png, `fantasy_map_${Date.now()}.png`);
+        setExporting(true);
+        setError(null);
+        setStatus({ tone: "info", text: t(`status.exporting${exportLabel}`) });
+        setBlockingTask({
+          message: t(`status.exporting${exportLabel}`),
+          detail: t("messages.exportingHint", { format: exportLabel }),
+        });
+        await waitForNextPaint();
+
+        if (format === "json") {
+          downloadBlob(
+            new Blob([mapData.mapJson], { type: "application/json" }),
+            `fantasy_map_${exportSlug}_${exportTimestamp}.json`,
+          );
+          setExporting(false);
+          setBlockingTask(null);
+          setStatus({ tone: "success", text: t("status.exported") });
+          return;
+        }
+
+        if (format === "png") {
+          const png = await rendererRef.current?.exportToPNG();
+          if (!png) throw new Error("Renderer is not ready");
+
+          downloadDataUrl(png, `fantasy_map_${exportSlug}_${exportTimestamp}.png`);
+          setExporting(false);
+          setBlockingTask(null);
+          setStatus({ tone: "success", text: t("status.exported") });
+          return;
+        }
+
+        const svg = await rendererRef.current?.exportToSVG();
+        if (!svg) throw new Error("Renderer is not ready");
+
+        downloadBlob(
+          new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+          `fantasy_map_${exportSlug}_${exportTimestamp}.svg`,
+        );
+        setExporting(false);
+        setBlockingTask(null);
         setStatus({ tone: "success", text: t("status.exported") });
-        return;
+      } catch (cause) {
+        setExporting(false);
+        setBlockingTask(null);
+        setError(
+          t("errors.export", { message: cause instanceof Error ? cause.message : String(cause) }),
+        );
+        setStatus({ tone: "error", text: t("status.ready") });
       }
-
-      const svg = await rendererRef.current?.exportToSVG();
-      if (!svg) throw new Error("Renderer is not ready");
-
-      downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), `fantasy_map_${Date.now()}.svg`);
-      setStatus({ tone: "success", text: t("status.exported") });
-    } catch (cause) {
-      setError(t("errors.export", { message: cause instanceof Error ? cause.message : String(cause) }));
-      setStatus({ tone: "error", text: t("status.ready") });
-    }
-  }, [mapData, mapJson, t]);
+    },
+    [mapData, presentation, t],
+  );
 
   const toggleTheme = useCallback(() => {
     toggleColorScheme();
   }, [toggleColorScheme]);
 
-  const sidebar = (
+  const blockingBusy = loading || rendererSwitching || exporting;
+
+  const sidebar = presentation ? (
     <ControlPanel
       config={config}
-      isBusy={loading}
+      isBusy={blockingBusy}
       onConfigChange={updateConfig}
       onGenerate={handleGenerate}
     />
-  );
+  ) : null;
 
   return (
     <Box className="grid h-dvh w-full overflow-hidden lg:grid-cols-[auto_1fr]">
@@ -215,7 +335,6 @@ function AppContent() {
         className="hidden"
         onChange={handleImportFile}
       />
-
       {/* Desktop sidebar */}
       <Box
         component="aside"
@@ -223,49 +342,66 @@ function AppContent() {
           "hidden overflow-hidden",
           "border-r transition-[width] duration-300 ease-in-out",
           "lg:block",
-          sidebarOpen ? "w-[320px] 2xl:w-[360px]" : "w-0 border-r-0"
+          sidebarOpen ? "w-[320px] 2xl:w-[360px]" : "w-0 border-r-0",
         )}
-        style={{ borderColor: "rgb(var(--app-border))", backgroundColor: "var(--mantine-color-body)" }}
+        style={{
+          borderColor: "rgb(var(--app-border))",
+          backgroundColor: "var(--mantine-color-body)",
+        }}
       >
-        <Box className="h-full w-[320px] 2xl:w-[360px]">
-          {sidebar}
-        </Box>
+        <Box className="h-full w-[320px] 2xl:w-[360px]">{sidebar}</Box>
       </Box>
 
       {/* Main content */}
       <Box component="main" className="relative overflow-hidden">
-        <MapRenderer
-          ref={rendererRef}
-          mapData={mapData}
-          layers={layers}
-          preferredMode={config.renderer}
-          onRendererSwitchStateChange={(switching) => {
-            setRendererSwitching(switching);
-            if (switching) {
+        {presentation ? (
+          <MapRenderer
+            ref={rendererRef}
+            mapData={mapData}
+            presentation={presentation}
+            onRendererSwitchStateChange={(switching) => {
+              setRendererSwitching(switching);
+              if (switching) {
+                setError(null);
+                setStatus({ tone: "info", text: t("status.switching") });
+                setBlockingTask({
+                  message: t("status.switching"),
+                  detail: presentation
+                    ? t("messages.switchingHint", { mode: t(`renderers.${presentation.renderer}`) })
+                    : t("messages.operationLocked"),
+                });
+              }
+            }}
+            onRendererStateChange={({ mode, actualBackend: backend, availableModes: modes }) => {
+              setRenderMode(mode);
+              setActualBackend(backend);
+              setAvailableModes(modes);
+            }}
+            onRenderComplete={(mode) => {
+              setLoading(false);
+              setRendererSwitching(false);
+              setBlockingTask(null);
               setError(null);
-              setStatus({ tone: "info", text: t("status.switching") });
-            }
-          }}
-          onRendererStateChange={({ mode, actualBackend: backend, availableModes: modes }) => {
-            setRenderMode(mode);
-            setActualBackend(backend);
-            setAvailableModes(modes);
-          }}
-          onRenderComplete={(mode) => {
-            setRendererSwitching(false);
-            setRenderMode(mode);
-            setStatus({ tone: "success", text: t("status.rendered") });
-          }}
-          onRenderError={(message) => {
-            setRendererSwitching(false);
-            setError(t("errors.render", { message }));
-            setStatus({ tone: "error", text: t("status.ready") });
-          }}
-        />
+              setRenderMode(mode);
+              setStatus({ tone: "success", text: t("status.rendered") });
+            }}
+            onRenderError={(message) => {
+              setLoading(false);
+              setExporting(false);
+              setRendererSwitching(false);
+              setBlockingTask(null);
+              setError(t("errors.render", { message }));
+              setStatus({ tone: "error", text: t("status.ready") });
+            }}
+          />
+        ) : null}
 
         {/* Sidebar toggle */}
         <Box className="absolute left-3 top-3 z-40 hidden lg:block">
-          <Tooltip label={sidebarOpen ? t("toolbar.hideSidebar") : t("toolbar.showSidebar")} position="right">
+          <Tooltip
+            label={sidebarOpen ? t("toolbar.hideSidebar") : t("toolbar.showSidebar")}
+            position="right"
+          >
             <ActionIcon
               size="lg"
               radius="md"
@@ -273,12 +409,19 @@ function AppContent() {
               color="gray"
               className={cn(
                 "border shadow-md cursor-pointer",
-                "hover:scale-105 transition-transform duration-200"
+                "hover:scale-105 transition-transform duration-200",
               )}
-              style={{ backgroundColor: "var(--mantine-color-body)", borderColor: "rgb(var(--app-border))" }}
+              style={{
+                backgroundColor: "var(--mantine-color-body)",
+                borderColor: "rgb(var(--app-border))",
+              }}
               onClick={() => setSidebarOpen((v) => !v)}
             >
-              {sidebarOpen ? <IconLayoutSidebarLeftCollapse size={18} /> : <IconLayoutSidebarLeftExpand size={18} />}
+              {sidebarOpen ? (
+                <IconLayoutSidebarLeftCollapse size={18} />
+              ) : (
+                <IconLayoutSidebarLeftExpand size={18} />
+              )}
             </ActionIcon>
           </Tooltip>
         </Box>
@@ -287,21 +430,26 @@ function AppContent() {
         <MapStats mapData={mapData} />
 
         {/* Status bar */}
-        <StatusBar
-          status={status}
-          error={error}
-          renderMode={renderMode}
-          actualBackend={actualBackend}
-          availableModes={availableModes}
-          loading={loading || rendererSwitching}
-          onRendererChange={(mode) => updateConfig("renderer", mode)}
-        />
+        {presentation ? (
+          <StatusBar
+            status={status}
+            error={error}
+            renderMode={renderMode}
+            actualBackend={actualBackend}
+            availableModes={availableModes}
+            loading={blockingBusy}
+            rendererPreference={presentation.renderer}
+            onRendererChange={(mode) => updatePresentation("renderer", mode)}
+          />
+        ) : null}
 
         {/* Layer control */}
-        <LayerControl
-          layers={layers}
-          onLayerChange={updateLayer}
-        />
+        {presentation ? (
+          <LayerControl
+            presentation={presentation}
+            onLayerChange={updateLayer}
+          />
+        ) : null}
 
         {/* Top toolbar */}
         <TopToolbar
@@ -324,9 +472,12 @@ function AppContent() {
             color="gray"
             className={cn(
               "border shadow-md cursor-pointer",
-              "hover:scale-110 active:scale-95 transition-transform duration-200"
+              "hover:scale-110 active:scale-95 transition-transform duration-200",
             )}
-            style={{ backgroundColor: "var(--mantine-color-body)", borderColor: "rgb(var(--app-border))" }}
+            style={{
+              backgroundColor: "var(--mantine-color-body)",
+              borderColor: "rgb(var(--app-border))",
+            }}
             onClick={openMobilePanel}
             aria-label={t("helpers.mobilePanel")}
           >
@@ -348,7 +499,11 @@ function AppContent() {
       </Drawer>
 
       {/* Loading overlay */}
-      <LoadingOverlay visible={loading} message={status.text} />
+      <LoadingOverlay
+        visible={blockingBusy}
+        message={blockingTask?.message ?? status.text}
+        detail={blockingTask?.detail ?? t("messages.operationLocked")}
+      />
     </Box>
   );
 }

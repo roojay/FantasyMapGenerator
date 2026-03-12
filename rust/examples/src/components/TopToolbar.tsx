@@ -1,4 +1,12 @@
-import { ActionIcon, Box, Button, Menu, SegmentedControl, Tooltip, useMantineColorScheme } from "@mantine/core";
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Menu,
+  SegmentedControl,
+  Tooltip,
+  useMantineColorScheme,
+} from "@mantine/core";
 import {
   IconChevronDown,
   IconFileDownload,
@@ -6,7 +14,7 @@ import {
   IconFocus2,
   IconMoon,
   IconRefresh,
-  IconSun
+  IconSun,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
@@ -32,7 +40,7 @@ export function TopToolbar({
   onFitView,
   onResetView,
   onLanguageChange,
-  onToggleTheme
+  onToggleTheme,
 }: TopToolbarProps) {
   const { t } = useTranslation();
   const { colorScheme: resolvedScheme } = useMantineColorScheme();
@@ -40,7 +48,7 @@ export function TopToolbar({
 
   const glassStyle: React.CSSProperties = {
     backgroundColor: "var(--mantine-color-body)",
-    borderColor: "rgb(var(--app-border))"
+    borderColor: "rgb(var(--app-border))",
   };
 
   return (
@@ -55,13 +63,13 @@ export function TopToolbar({
           className="shrink-0"
           classNames={{
             root: "min-w-[70px]",
-            indicator: "transition-all duration-200 ease-out"
+            indicator: "transition-all duration-200 ease-out",
           }}
           value={language}
           onChange={(value) => onLanguageChange(value as AppLanguage)}
           data={[
             { label: "中文", value: "zh-CN" },
-            { label: "EN", value: "en" }
+            { label: "EN", value: "en" },
           ]}
         />
 
@@ -80,10 +88,7 @@ export function TopToolbar({
             onClick={onToggleTheme}
             className="cursor-pointer"
             classNames={{
-              root: cn(
-                "hover:scale-110 active:scale-90",
-                "transition-transform duration-200"
-              )
+              root: cn("hover:scale-110 active:scale-90", "transition-transform duration-200"),
             }}
           >
             {isDark ? <IconSun size={14} /> : <IconMoon size={14} />}
@@ -105,10 +110,7 @@ export function TopToolbar({
             onClick={onFitView}
             className="cursor-pointer"
             classNames={{
-              root: cn(
-                "hover:scale-110 active:scale-90",
-                "transition-transform duration-200"
-              )
+              root: cn("hover:scale-110 active:scale-90", "transition-transform duration-200"),
             }}
           >
             <IconFocus2 size={14} />
@@ -124,10 +126,7 @@ export function TopToolbar({
             onClick={onResetView}
             className="cursor-pointer"
             classNames={{
-              root: cn(
-                "hover:scale-110 active:scale-90",
-                "transition-transform duration-200"
-              )
+              root: cn("hover:scale-110 active:scale-90", "transition-transform duration-200"),
             }}
           >
             <IconRefresh size={14} />
@@ -152,8 +151,8 @@ export function TopToolbar({
             root: cn(
               "max-[479px]:!px-2",
               "hover:scale-105 active:scale-95",
-              "transition-transform duration-200"
-            )
+              "transition-transform duration-200",
+            ),
           }}
         >
           <span className="max-[479px]:hidden">{t("toolbar.import")}</span>
@@ -172,17 +171,23 @@ export function TopToolbar({
                 root: cn(
                   "max-[479px]:!px-2",
                   "hover:scale-105 active:scale-95",
-                  "transition-transform duration-200"
-                )
+                  "transition-transform duration-200",
+                ),
               }}
             >
               <span className="max-[479px]:hidden">{t("toolbar.export")}</span>
             </Button>
           </Menu.Target>
           <Menu.Dropdown>
-            <Menu.Item className="cursor-pointer" onClick={() => onExport("svg")}>SVG</Menu.Item>
-            <Menu.Item className="cursor-pointer" onClick={() => onExport("png")}>PNG</Menu.Item>
-            <Menu.Item className="cursor-pointer" onClick={() => onExport("json")}>JSON</Menu.Item>
+            <Menu.Item className="cursor-pointer" onClick={() => onExport("svg")}>
+              SVG
+            </Menu.Item>
+            <Menu.Item className="cursor-pointer" onClick={() => onExport("png")}>
+              PNG
+            </Menu.Item>
+            <Menu.Item className="cursor-pointer" onClick={() => onExport("json")}>
+              JSON
+            </Menu.Item>
           </Menu.Dropdown>
         </Menu>
       </Box>

@@ -3,7 +3,12 @@ import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
-import type { RenderBackend, RendererPreference, RendererRuntimeBackend, StatusMessage } from "@/types/map";
+import type {
+  RenderBackend,
+  RendererPreference,
+  RendererRuntimeBackend,
+  StatusMessage,
+} from "@/types/map";
 
 interface StatusBarProps {
   status: StatusMessage;
@@ -12,6 +17,7 @@ interface StatusBarProps {
   actualBackend: RendererRuntimeBackend;
   availableModes: RenderBackend[];
   loading: boolean;
+  rendererPreference: RendererPreference;
   onRendererChange: (mode: RendererPreference) => void;
 }
 
@@ -19,23 +25,23 @@ const statusColors = {
   neutral: {
     bg: "rgb(251, 191, 36)",
     text: "rgb(120, 53, 15)",
-    border: "rgb(251, 191, 36)"
+    border: "rgb(251, 191, 36)",
   },
   success: {
     bg: "rgb(34, 197, 94)",
     text: "rgb(255, 255, 255)",
-    border: "rgb(34, 197, 94)"
+    border: "rgb(34, 197, 94)",
   },
   info: {
     bg: "rgb(59, 130, 246)",
     text: "rgb(255, 255, 255)",
-    border: "rgb(59, 130, 246)"
+    border: "rgb(59, 130, 246)",
   },
   error: {
     bg: "rgb(239, 68, 68)",
     text: "rgb(255, 255, 255)",
-    border: "rgb(239, 68, 68)"
-  }
+    border: "rgb(239, 68, 68)",
+  },
 };
 
 export function StatusBar({
@@ -45,27 +51,28 @@ export function StatusBar({
   actualBackend,
   availableModes,
   loading,
-  onRendererChange
+  rendererPreference,
+  onRendererChange,
 }: StatusBarProps) {
   const { t } = useTranslation();
   const colors = statusColors[status.tone];
-  const activeRendererOption: RenderBackend | null =
-    actualBackend === "svg"
+  const activeRendererOption: RendererPreference =
+    rendererPreference === "svg" || actualBackend === "svg"
       ? "svg"
-      : actualBackend === "webgpu" || actualBackend === "webgl2"
+      : rendererPreference === "webgpu" || actualBackend === "webgpu" || actualBackend === "webgl2"
         ? "webgpu"
-        : renderMode;
+        : "auto";
 
   const glassStyle: React.CSSProperties = {
     backgroundColor: "var(--mantine-color-body)",
     borderColor: "rgb(var(--app-border))",
-    backdropFilter: "blur(12px)"
+    backdropFilter: "blur(12px)",
   };
 
   const rendererOptions = (["auto", "webgpu", "svg"] as RendererPreference[]).map((mode) => ({
     value: mode,
     label: t(`renderers.${mode}`),
-    disabled: mode !== "auto" && !availableModes.includes(mode as RenderBackend)
+    disabled: mode !== "auto" && !availableModes.includes(mode as RenderBackend),
   }));
 
   return (
@@ -73,20 +80,17 @@ export function StatusBar({
       <Box
         className={cn(
           "pointer-events-auto rounded-lg border px-3 py-2 shadow-md",
-          "backdrop-blur-xl max-w-[calc(100vw-8rem)] sm:max-w-none"
+          "backdrop-blur-xl max-w-[calc(100vw-8rem)] sm:max-w-none",
         )}
         style={glassStyle}
       >
         <Box className="grid auto-cols-max grid-flow-col items-center gap-2">
           {/* Status dot with breathing animation */}
           <Box
-            className={cn(
-              "h-2 w-2 rounded-full shrink-0",
-              loading && "status-breathing"
-            )}
+            className={cn("h-2 w-2 rounded-full shrink-0", loading && "status-breathing")}
             style={{
               backgroundColor: colors.bg,
-              boxShadow: `0 0 8px ${colors.bg}`
+              boxShadow: `0 0 8px ${colors.bg}`,
             }}
           />
 
@@ -111,7 +115,9 @@ export function StatusBar({
                       className="cursor-pointer"
                       leftSection={
                         <Box className="grid h-3.5 w-3.5 place-items-center">
-                          {option.value === activeRendererOption ? <IconCheck size={12} stroke={2.5} /> : null}
+                          {option.value === activeRendererOption ? (
+                            <IconCheck size={12} stroke={2.5} />
+                          ) : null}
                         </Box>
                       }
                       rightSection={
@@ -148,8 +154,8 @@ export function StatusBar({
         <Box
           className="pointer-events-auto rounded-lg border px-3 py-2 shadow-md backdrop-blur-xl mt-2"
           style={{
-            backgroundColor: "rgba(239, 68, 68, 0.1)",
-            borderColor: "rgb(239, 68, 68)"
+            backgroundColor: "rgb(var(--app-danger-bg))",
+            borderColor: "rgb(var(--app-danger-border))",
           }}
         >
           <Text c="red" size="xs" className="max-w-[calc(100vw-8rem)] truncate sm:max-w-none">

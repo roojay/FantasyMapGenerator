@@ -25,7 +25,7 @@ export interface MapRaster<T extends number = number> {
   data: T[];
 }
 
-export interface LegacyMapData {
+export interface MapExportData {
   city: number[];
   contour: number[][];
   draw_scale: number;
@@ -100,8 +100,7 @@ export interface MapScenePacket {
   };
   landPolygonPositions: Float32Array;
   landPolygonOffsets: Uint32Array;
-  source: "wasm" | "legacy-json";
-  legacyJson?: string | null;
+  mapJson: string;
 }
 
 export interface MapLayers {
@@ -114,6 +113,49 @@ export interface MapLayers {
   label: boolean;
 }
 
+export interface PresentationPluginCapabilityMetadata {
+  supports_layer_config: boolean;
+  supports_direct_svg_export: boolean;
+  requires_raster_data: boolean;
+  requires_heightmap: boolean;
+  requires_land_mask: boolean;
+  embeds_raster_images: boolean;
+}
+
+export interface PresentationLayerMetadata {
+  id: keyof MapLayers;
+  label: string;
+  default_enabled: boolean;
+}
+
+export interface PresentationConfigFieldMetadata {
+  key: string;
+  label: string;
+  description: string;
+  field_type: "boolean" | "integer" | "float";
+  default_value: boolean | number | string | null;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+}
+
+export interface PresentationConfigSectionMetadata {
+  id: string;
+  label: string;
+  description: string;
+  fields: PresentationConfigFieldMetadata[];
+}
+
+export interface PresentationPluginMetadata {
+  id: string;
+  display_name: string;
+  description: string;
+  output_kind: "svg_scene" | "gpu_scene_packet";
+  capabilities: PresentationPluginCapabilityMetadata;
+  supported_layers: PresentationLayerMetadata[];
+  config_sections: PresentationConfigSectionMetadata[];
+}
+
 export interface MapConfig {
   seed: number;
   width: number;
@@ -122,7 +164,11 @@ export interface MapConfig {
   cities: number;
   towns: number;
   drawScale: number;
+}
+
+export interface MapPresentationPreset {
   renderer: RendererPreference;
+  layers: MapLayers;
 }
 
 export interface StatusMessage {

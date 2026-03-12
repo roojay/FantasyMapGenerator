@@ -1,528 +1,266 @@
-//! WASM 绑定模块
-//!
-//! 提供 JavaScript 可调用的 WASM 接口，用于在浏览器中生成地图。
-
-use crate::presentation::webgpu::{WebGpuPresentationConfig, WebGpuScenePlugin};
-use crate::presentation::RenderDataPlugin;
-use crate::standard_svg;
-use crate::{Extents2d, GlibcRand, MapDrawData, MapExportOptions, MapGenerator};
-use wasm_bindgen::prelude::*;
+use crate::presentation::{
+    default_layer_metadata, PresentationOutputKind, PresentationPluginCapabilities,
+    PresentationPluginMetadata, RenderDataPlugin,
+};
+use crate::MapDrawData;
+use serde::Serialize;
 
 const TERRAIN_ELEVATION_SCALE: f32 = 64.0;
 const WATER_DEPTH_SCALE: f32 = 10.0;
 const OVERLAY_HEIGHT_OFFSET: f32 = 1.2;
 const LABEL_HEIGHT_OFFSET: f32 = 2.4;
 
-#[wasm_bindgen]
-pub struct WasmRenderPacket {
-    metadata_json: String,
-    map_json: String,
-    terrain_positions: Vec<f32>,
-    terrain_normals: Vec<f32>,
-    terrain_uvs: Vec<f32>,
-    terrain_indices: Vec<u32>,
-    height_texture: Vec<u8>,
-    land_mask_texture: Vec<u8>,
-    flux_texture: Vec<u8>,
-    albedo_texture: Vec<u8>,
-    terrain_albedo_texture: Vec<u8>,
-    roughness_texture: Vec<u8>,
-    ao_texture: Vec<u8>,
-    water_color_texture: Vec<u8>,
-    water_alpha_texture: Vec<u8>,
-    coast_glow_texture: Vec<u8>,
-    slope_segments: Vec<f32>,
-    river_positions: Vec<f32>,
-    river_offsets: Vec<u32>,
-    contour_positions: Vec<f32>,
-    contour_offsets: Vec<u32>,
-    border_positions: Vec<f32>,
-    border_offsets: Vec<u32>,
-    city_positions: Vec<f32>,
-    town_positions: Vec<f32>,
-    label_bytes: Vec<u8>,
-    label_offsets: Vec<u32>,
-    label_anchors: Vec<f32>,
-    label_sizes: Vec<f32>,
-    land_polygon_positions: Vec<f32>,
-    land_polygon_offsets: Vec<u32>,
+#[derive(Clone, Debug, Serialize)]
+pub struct WebGpuSceneMetadata {
+    pub image_width: u32,
+    pub image_height: u32,
+    pub draw_scale: f64,
+    pub terrain_width: u32,
+    pub terrain_height: u32,
+    pub elevation_scale: f32,
+    pub city_count: u32,
+    pub town_count: u32,
+    pub river_count: u32,
+    pub territory_count: u32,
+    pub label_count: u32,
 }
 
-#[wasm_bindgen]
-impl WasmRenderPacket {
-    #[wasm_bindgen(getter)]
-    pub fn metadata_json(&self) -> String {
-        self.metadata_json.clone()
+#[derive(Clone, Debug)]
+pub struct WebGpuTextureSet {
+    pub height: Vec<u8>,
+    pub land_mask: Vec<u8>,
+    pub flux: Vec<u8>,
+    pub albedo: Vec<u8>,
+    pub terrain_albedo: Vec<u8>,
+    pub roughness: Vec<u8>,
+    pub ao: Vec<u8>,
+    pub water_color: Vec<u8>,
+    pub water_alpha: Vec<u8>,
+    pub coast_glow: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WebGpuScenePacket {
+    pub metadata: WebGpuSceneMetadata,
+    pub terrain_positions: Vec<f32>,
+    pub terrain_normals: Vec<f32>,
+    pub terrain_uvs: Vec<f32>,
+    pub terrain_indices: Vec<u32>,
+    pub textures: WebGpuTextureSet,
+    pub slope_segments: Vec<f32>,
+    pub river_positions: Vec<f32>,
+    pub river_offsets: Vec<u32>,
+    pub contour_positions: Vec<f32>,
+    pub contour_offsets: Vec<u32>,
+    pub border_positions: Vec<f32>,
+    pub border_offsets: Vec<u32>,
+    pub city_positions: Vec<f32>,
+    pub town_positions: Vec<f32>,
+    pub label_bytes: Vec<u8>,
+    pub label_offsets: Vec<u32>,
+    pub label_anchors: Vec<f32>,
+    pub label_sizes: Vec<f32>,
+    pub land_polygon_positions: Vec<f32>,
+    pub land_polygon_offsets: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WebGpuPresentationConfig;
+
+#[derive(Default)]
+pub struct WebGpuScenePlugin;
+
+impl RenderDataPlugin for WebGpuScenePlugin {
+    type Config = WebGpuPresentationConfig;
+    type Output = WebGpuScenePacket;
+    type Error = String;
+
+    fn build(map_data: &MapDrawData, _config: &Self::Config) -> Result<Self::Output, Self::Error> {
+        build_webgpu_scene_packet(map_data)
     }
 
-    #[wasm_bindgen(getter)]
-    pub fn map_json(&self) -> String {
-        self.map_json.clone()
-    }
-
-    pub fn terrain_positions(&self) -> Vec<f32> {
-        self.terrain_positions.clone()
-    }
-
-    pub fn terrain_normals(&self) -> Vec<f32> {
-        self.terrain_normals.clone()
-    }
-
-    pub fn terrain_uvs(&self) -> Vec<f32> {
-        self.terrain_uvs.clone()
-    }
-
-    pub fn terrain_indices(&self) -> Vec<u32> {
-        self.terrain_indices.clone()
-    }
-
-    pub fn height_texture(&self) -> Vec<u8> {
-        self.height_texture.clone()
-    }
-
-    pub fn land_mask_texture(&self) -> Vec<u8> {
-        self.land_mask_texture.clone()
-    }
-
-    pub fn flux_texture(&self) -> Vec<u8> {
-        self.flux_texture.clone()
-    }
-
-    pub fn albedo_texture(&self) -> Vec<u8> {
-        self.albedo_texture.clone()
-    }
-
-    pub fn terrain_albedo_texture(&self) -> Vec<u8> {
-        self.terrain_albedo_texture.clone()
-    }
-
-    pub fn roughness_texture(&self) -> Vec<u8> {
-        self.roughness_texture.clone()
-    }
-
-    pub fn ao_texture(&self) -> Vec<u8> {
-        self.ao_texture.clone()
-    }
-
-    pub fn water_color_texture(&self) -> Vec<u8> {
-        self.water_color_texture.clone()
-    }
-
-    pub fn water_alpha_texture(&self) -> Vec<u8> {
-        self.water_alpha_texture.clone()
-    }
-
-    pub fn coast_glow_texture(&self) -> Vec<u8> {
-        self.coast_glow_texture.clone()
-    }
-
-    pub fn slope_segments(&self) -> Vec<f32> {
-        self.slope_segments.clone()
-    }
-
-    pub fn river_positions(&self) -> Vec<f32> {
-        self.river_positions.clone()
-    }
-
-    pub fn river_offsets(&self) -> Vec<u32> {
-        self.river_offsets.clone()
-    }
-
-    pub fn contour_positions(&self) -> Vec<f32> {
-        self.contour_positions.clone()
-    }
-
-    pub fn contour_offsets(&self) -> Vec<u32> {
-        self.contour_offsets.clone()
-    }
-
-    pub fn border_positions(&self) -> Vec<f32> {
-        self.border_positions.clone()
-    }
-
-    pub fn border_offsets(&self) -> Vec<u32> {
-        self.border_offsets.clone()
-    }
-
-    pub fn city_positions(&self) -> Vec<f32> {
-        self.city_positions.clone()
-    }
-
-    pub fn town_positions(&self) -> Vec<f32> {
-        self.town_positions.clone()
-    }
-
-    pub fn label_bytes(&self) -> Vec<u8> {
-        self.label_bytes.clone()
-    }
-
-    pub fn label_offsets(&self) -> Vec<u32> {
-        self.label_offsets.clone()
-    }
-
-    pub fn label_anchors(&self) -> Vec<f32> {
-        self.label_anchors.clone()
-    }
-
-    pub fn label_sizes(&self) -> Vec<f32> {
-        self.label_sizes.clone()
-    }
-
-    pub fn land_polygon_positions(&self) -> Vec<f32> {
-        self.land_polygon_positions.clone()
-    }
-
-    pub fn land_polygon_offsets(&self) -> Vec<u32> {
-        self.land_polygon_offsets.clone()
+    fn metadata() -> PresentationPluginMetadata {
+        PresentationPluginMetadata {
+            id: "webgpu_scene",
+            display_name: "WebGPU Scene",
+            description:
+                "Structured terrain packet for GPU-first rendering with rich raster textures.",
+            output_kind: PresentationOutputKind::GpuScenePacket,
+            capabilities: PresentationPluginCapabilities {
+                supports_layer_config: false,
+                supports_direct_svg_export: false,
+                requires_raster_data: true,
+                requires_heightmap: true,
+                requires_land_mask: true,
+                embeds_raster_images: false,
+            },
+            supported_layers: default_layer_metadata(),
+            config_sections: Vec::new(),
+        }
     }
 }
 
-/// 设置 panic hook，在浏览器控制台显示 Rust panic 信息
-#[wasm_bindgen(start)]
-pub fn init_panic_hook() {
-    console_error_panic_hook::set_once();
-}
+pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePacket, String> {
+    let heightmap = map_data
+        .heightmap
+        .as_ref()
+        .ok_or_else(|| "render packet requires heightmap data".to_string())?;
+    let land_mask = map_data
+        .land_mask
+        .as_ref()
+        .ok_or_else(|| "render packet requires land_mask data".to_string())?;
 
-/// WASM 地图生成器包装器
-#[wasm_bindgen]
-pub struct WasmMapGenerator {
-    generator: MapGenerator,
-    seed: u32,
-}
-
-#[wasm_bindgen]
-impl WasmMapGenerator {
-    /// 创建新的地图生成器
-    ///
-    /// # 参数
-    /// - `seed`: 随机种子（0 表示使用时间戳）
-    /// - `width`: 地图宽度（像素）
-    /// - `height`: 地图高度（像素）
-    /// - `resolution`: 网格分辨率（0.01-0.2，推荐 0.08）
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        seed: u32,
-        width: u32,
-        height: u32,
-        resolution: f64,
-    ) -> Result<WasmMapGenerator, JsValue> {
-        // 使用种子或时间戳
-        let actual_seed = if seed == 0 {
-            (js_sys::Date::now() as u32) % 1000000
-        } else {
-            seed
-        };
-
-        // 创建地图范围
-        let default_extents_height = 20.0;
-        let aspect_ratio = width as f64 / height as f64;
-        let extents_width = aspect_ratio * default_extents_height;
-        let extents = Extents2d::new(0.0, 0.0, extents_width, default_extents_height);
-
-        // 创建随机数生成器
-        let mut rng = GlibcRand::new(actual_seed);
-
-        // 预热随机数生成器（与 CLI 保持一致）
-        for _ in 0..1000 {
-            rng.rand();
-        }
-
-        // 创建地图生成器
-        let generator = MapGenerator::new(extents, resolution, width, height, rng);
-
-        Ok(WasmMapGenerator {
-            generator,
-            seed: actual_seed,
-        })
+    if heightmap.width != land_mask.width || heightmap.height != land_mask.height {
+        return Err("heightmap and land_mask dimensions must match".to_string());
     }
 
-    /// 生成完整的地图
-    ///
-    /// 返回包含地图数据的 JSON 字符串
-    #[wasm_bindgen]
-    pub fn generate(&mut self, num_cities: i32, num_towns: i32) -> Result<String, JsValue> {
-        self.generate_with_options(num_cities, num_towns, true)
-    }
+    let terrain_width = heightmap.width;
+    let terrain_height = heightmap.height;
+    let flux_map = map_data.flux_map.as_ref();
 
-    #[wasm_bindgen]
-    pub fn generate_render_packet(
-        &mut self,
-        num_cities: i32,
-        num_towns: i32,
-    ) -> Result<WasmRenderPacket, JsValue> {
-        let draw_data = self.generate_draw_data(num_cities, num_towns, true)?;
-        build_render_packet(&draw_data)
-    }
+    let top_down_height = to_top_down_f32(&heightmap.data, terrain_width, terrain_height);
+    let top_down_land = to_top_down_u8(&land_mask.data, terrain_width, terrain_height);
+    let top_down_flux = flux_map
+        .map(|flux| to_top_down_f32(&flux.data, flux.width, flux.height))
+        .unwrap_or_else(|| vec![0.0; (terrain_width * terrain_height) as usize]);
+    let elevations = build_elevation_field(
+        &top_down_height,
+        &top_down_land,
+        terrain_width,
+        terrain_height,
+    );
 
-    /// 生成完整地图，并允许网页端按需决定是否导出附加栅格数据。
-    ///
-    /// # 参数
-    /// * `num_cities` - 城市数量
-    /// * `num_towns` - 城镇数量
-    /// * `include_raster_data` - 是否导出附加栅格数据
-    ///
-    /// # 与原始 C++ 的差异
-    /// 原始 C++ 版本没有 WASM 导出层，也没有“按需导出栅格”的调用入口。
-    /// 这个接口是本 fork 为浏览器场景新增的能力，用来减少 WASM 与 JS 之间
-    /// 的大块 JSON 传输。
-    ///
-    /// # 性能说明
-    /// 普通矢量渲染可将 `include_raster_data` 设为 `false`，
-    /// 仅在需要额外栅格数据时再开启。
-    #[wasm_bindgen]
-    pub fn generate_with_options(
-        &mut self,
-        num_cities: i32,
-        num_towns: i32,
-        include_raster_data: bool,
-    ) -> Result<String, JsValue> {
-        let draw_data = self.generate_draw_data(num_cities, num_towns, include_raster_data)?;
-        serde_json::to_string(&draw_data).map_err(|err| JsValue::from_str(&err.to_string()))
-    }
+    let (terrain_positions, terrain_normals, terrain_uvs, terrain_indices) = build_terrain_mesh(
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+    );
 
-    /// 仅生成地形（不包括城市和边界）
-    #[wasm_bindgen]
-    pub fn generate_terrain_only(&mut self) -> Result<String, JsValue> {
-        // 初始化网格
-        self.generator.initialize();
+    let height_texture = encode_scalar_texture(&top_down_height, terrain_width, terrain_height);
+    let land_mask_texture = encode_mask_texture(&top_down_land, terrain_width, terrain_height);
+    let flux_texture = encode_scalar_texture(&top_down_flux, terrain_width, terrain_height);
+    let albedo_texture = encode_albedo_texture(
+        &top_down_height,
+        &top_down_land,
+        &top_down_flux,
+        terrain_width,
+        terrain_height,
+    );
+    let surface_textures = build_surface_texture_pack(
+        &albedo_texture,
+        &height_texture,
+        &flux_texture,
+        &land_mask_texture,
+        terrain_width,
+        terrain_height,
+    );
 
-        // 生成地形
-        self.initialize_heightmap();
+    let metadata = WebGpuSceneMetadata {
+        image_width: map_data.image_width,
+        image_height: map_data.image_height,
+        draw_scale: map_data.draw_scale,
+        terrain_width,
+        terrain_height,
+        elevation_scale: TERRAIN_ELEVATION_SCALE,
+        city_count: (map_data.city.len() / 2) as u32,
+        town_count: (map_data.town.len() / 2) as u32,
+        river_count: map_data.river.len() as u32,
+        territory_count: map_data.territory.len() as u32,
+        label_count: map_data.label.len() as u32,
+    };
 
-        // 侵蚀地形
-        self.erode(0.25, 5);
+    let slope_segments = build_slope_segments(
+        &map_data.slope,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+    );
+    let (river_positions, river_offsets) = build_path_positions(
+        &map_data.river,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+        OVERLAY_HEIGHT_OFFSET + 0.5,
+    );
+    let (contour_positions, contour_offsets) = build_path_positions(
+        &map_data.contour,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+        OVERLAY_HEIGHT_OFFSET,
+    );
+    let (border_positions, border_offsets) = build_path_positions(
+        &map_data.territory,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+        OVERLAY_HEIGHT_OFFSET + 0.25,
+    );
+    let city_positions = build_point_positions(
+        &map_data.city,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+        LABEL_HEIGHT_OFFSET,
+    );
+    let town_positions = build_point_positions(
+        &map_data.town,
+        map_data.image_width,
+        map_data.image_height,
+        terrain_width,
+        terrain_height,
+        &elevations,
+        LABEL_HEIGHT_OFFSET - 0.7,
+    );
+    let (label_bytes, label_offsets, label_anchors, label_sizes) =
+        encode_labels(map_data, terrain_width, terrain_height, &elevations);
+    let (land_polygon_positions, land_polygon_offsets) = encode_land_polygons(map_data);
 
-        // 导出为 JSON
-        let draw_data = self.generator.collect_draw_data();
-        serde_json::to_string(&draw_data).map_err(|err| JsValue::from_str(&err.to_string()))
-    }
-
-    /// 获取当前使用的种子
-    #[wasm_bindgen]
-    pub fn get_seed(&self) -> u32 {
-        self.seed
-    }
-
-    /// 设置绘制缩放比例
-    #[wasm_bindgen]
-    pub fn set_draw_scale(&mut self, scale: f64) {
-        self.generator.set_draw_scale(scale);
-    }
-
-    // 内部辅助方法
-
-    /// 初始化地形高度图
-    fn initialize_heightmap(&mut self) {
-        let pad = 5.0;
-        let extents = self.generator.get_extents();
-
-        let expanded = Extents2d::new(
-            extents.minx - pad,
-            extents.miny - pad,
-            extents.maxx + pad,
-            extents.maxy + pad,
-        );
-
-        // 随机放置山丘和圆锥
-        let n = self.generator.rng_mut().random_double(100.0, 250.0) as i32;
-        for _ in 0..n {
-            let _px_discard = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.minx, expanded.maxx);
-            let px = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.minx, expanded.maxx);
-            let py = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.miny, expanded.maxy);
-            let r = self.generator.rng_mut().random_double(1.0, 8.0);
-            let strength = self.generator.rng_mut().random_double(0.5, 1.5);
-
-            if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
-                self.generator.add_hill(px, py, r, strength);
-            } else {
-                self.generator.add_cone(px, py, r, strength);
-            }
-        }
-
-        // 可能添加大型圆锥
-        if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
-            let _px_discard = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.minx, expanded.maxx);
-            let px = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.minx, expanded.maxx);
-            let py = self
-                .generator
-                .rng_mut()
-                .random_double(expanded.miny, expanded.maxy);
-            let r = self.generator.rng_mut().random_double(6.0, 12.0);
-            let strength = self.generator.rng_mut().random_double(1.0, 3.0);
-            self.generator.add_cone(px, py, r, strength);
-        }
-
-        // 可能添加斜坡
-        if self.generator.rng_mut().random_double(0.0, 1.0) > 0.1 {
-            let angle = self
-                .generator
-                .rng_mut()
-                .random_double(0.0, 2.0 * std::f64::consts::PI);
-            let dir_x = angle.sin();
-            let dir_y = angle.cos();
-            let _lx_discard = self
-                .generator
-                .rng_mut()
-                .random_double(extents.minx, extents.maxx);
-            let lx = self
-                .generator
-                .rng_mut()
-                .random_double(extents.minx, extents.maxx);
-            let ly = self
-                .generator
-                .rng_mut()
-                .random_double(extents.miny, extents.maxy);
-            let slope_width = self.generator.rng_mut().random_double(0.5, 5.0);
-            let strength = self.generator.rng_mut().random_double(2.0, 3.0);
-            self.generator
-                .add_slope(lx, ly, dir_x, dir_y, slope_width, strength);
-        }
-
-        // 归一化或圆滑
-        if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
-            self.generator.normalize();
-        } else {
-            self.generator.round();
-        }
-
-        // 可能松弛
-        if self.generator.rng_mut().random_double(0.0, 1.0) > 0.5 {
-            self.generator.relax();
-        }
-    }
-
-    /// 侵蚀地形
-    fn erode(&mut self, amount: f64, iterations: i32) {
-        for _ in 0..iterations {
-            self.generator.erode(amount / iterations as f64);
-        }
-        self.generator.set_sea_level_to_median();
-    }
-
-    /// 获取城市名称
-    fn get_label_names(&mut self, num: usize) -> Vec<String> {
-        let city_data = include_str!("citydata/countrycities.json");
-        let json: serde_json::Value = serde_json::from_str(city_data).expect("valid JSON");
-        let obj = json.as_object().unwrap();
-        let countries: Vec<String> = obj.keys().cloned().collect();
-        let mut cities: Vec<String> = Vec::new();
-
-        while cities.len() < num {
-            let rand_idx = self.generator.rng_mut().rand() as usize % countries.len();
-            let country = &countries[rand_idx];
-            if let Some(arr) = json[country].as_array() {
-                for v in arr {
-                    if let Some(s) = v.as_str() {
-                        cities.push(s.to_string());
-                    }
-                }
-            }
-        }
-
-        // Fisher-Yates 洗牌
-        for i in (0..cities.len().saturating_sub(1)).rev() {
-            let j = self.generator.rng_mut().rand() as usize % (i + 1);
-            cities.swap(i, j);
-        }
-
-        cities.truncate(num);
-        cities
-    }
-
-    fn generate_draw_data(
-        &mut self,
-        num_cities: i32,
-        num_towns: i32,
-        include_raster_data: bool,
-    ) -> Result<MapDrawData, JsValue> {
-        // PERF: 将栅格导出显式化，避免普通网页路径总是携带大型 height/flux/mask 数组。
-        self.generator.initialize();
-        self.initialize_heightmap();
-        self.erode(0.25, 5);
-
-        let label_names = self.get_label_names((2 * num_cities + num_towns) as usize);
-        let mut label_idx = label_names.len();
-
-        for _ in 0..num_cities {
-            if label_idx >= 2 {
-                label_idx -= 2;
-                let city_name = label_names[label_idx + 1].clone();
-                let territory_name = label_names[label_idx].to_uppercase();
-                self.generator.add_city(city_name, territory_name);
-            }
-        }
-
-        for _ in 0..num_towns {
-            if label_idx >= 1 {
-                label_idx -= 1;
-                let town_name = label_names[label_idx].clone();
-                self.generator.add_town(town_name);
-            }
-        }
-
-        Ok(self
-            .generator
-            .collect_draw_data_with_options(MapExportOptions {
-                include_raster_data,
-            }))
-    }
-}
-
-fn build_render_packet(draw_data: &MapDrawData) -> Result<WasmRenderPacket, JsValue> {
-    let map_json =
-        serde_json::to_string(draw_data).map_err(|err| JsValue::from_str(&err.to_string()))?;
-    let packet = WebGpuScenePlugin::build(draw_data, &WebGpuPresentationConfig::default())
-        .map_err(|err| JsValue::from_str(&err))?;
-    let metadata_json = serde_json::to_string(&packet.metadata)
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
-
-    Ok(WasmRenderPacket {
-        metadata_json,
-        map_json,
-        terrain_positions: packet.terrain_positions,
-        terrain_normals: packet.terrain_normals,
-        terrain_uvs: packet.terrain_uvs,
-        terrain_indices: packet.terrain_indices,
-        height_texture: packet.textures.height,
-        land_mask_texture: packet.textures.land_mask,
-        flux_texture: packet.textures.flux,
-        albedo_texture: packet.textures.albedo,
-        terrain_albedo_texture: packet.textures.terrain_albedo,
-        roughness_texture: packet.textures.roughness,
-        ao_texture: packet.textures.ao,
-        water_color_texture: packet.textures.water_color,
-        water_alpha_texture: packet.textures.water_alpha,
-        coast_glow_texture: packet.textures.coast_glow,
-        slope_segments: packet.slope_segments,
-        river_positions: packet.river_positions,
-        river_offsets: packet.river_offsets,
-        contour_positions: packet.contour_positions,
-        contour_offsets: packet.contour_offsets,
-        border_positions: packet.border_positions,
-        border_offsets: packet.border_offsets,
-        city_positions: packet.city_positions,
-        town_positions: packet.town_positions,
-        label_bytes: packet.label_bytes,
-        label_offsets: packet.label_offsets,
-        label_anchors: packet.label_anchors,
-        label_sizes: packet.label_sizes,
-        land_polygon_positions: packet.land_polygon_positions,
-        land_polygon_offsets: packet.land_polygon_offsets,
+    Ok(WebGpuScenePacket {
+        metadata,
+        terrain_positions,
+        terrain_normals,
+        terrain_uvs,
+        terrain_indices,
+        textures: WebGpuTextureSet {
+            height: height_texture,
+            land_mask: land_mask_texture,
+            flux: flux_texture,
+            albedo: albedo_texture,
+            terrain_albedo: surface_textures.terrain_albedo,
+            roughness: surface_textures.roughness,
+            ao: surface_textures.ao,
+            water_color: surface_textures.water_color,
+            water_alpha: surface_textures.water_alpha,
+            coast_glow: surface_textures.coast_glow,
+        },
+        slope_segments,
+        river_positions,
+        river_offsets,
+        contour_positions,
+        contour_offsets,
+        border_positions,
+        border_offsets,
+        city_positions,
+        town_positions,
+        label_bytes,
+        label_offsets,
+        label_anchors,
+        label_sizes,
+        land_polygon_positions,
+        land_polygon_offsets,
     })
 }
 
@@ -1321,84 +1059,4 @@ fn sample_elevation(
     let hx0 = h00 + (h10 - h00) * tx;
     let hx1 = h01 + (h11 - h01) * tx;
     hx0 + (hx1 - hx0) * ty
-}
-
-/// 简化的地图生成函数（用于快速测试）
-#[wasm_bindgen]
-pub fn generate_map_simple(seed: u32, width: u32, height: u32) -> Result<String, JsValue> {
-    let mut generator = WasmMapGenerator::new(seed, width, height, 0.08)?;
-    generator.generate(5, 10)
-}
-
-/// 根据导出的地图 JSON 和图层配置在 Rust 侧生成标准原始地图 SVG。
-#[wasm_bindgen]
-pub fn build_map_svg(map_json: &str, layers_json: &str) -> Result<String, JsValue> {
-    standard_svg::build_map_svg(map_json, layers_json).map_err(|err| JsValue::from_str(&err))
-}
-
-/// 返回 presentation 插件的统一 capability/config metadata。
-#[wasm_bindgen]
-pub fn presentation_plugin_metadata_json() -> Result<String, JsValue> {
-    serde_json::to_string(&crate::presentation::presentation_plugin_metadata())
-        .map_err(|err| JsValue::from_str(&err.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{presentation_plugin_metadata_json, WasmMapGenerator};
-
-    #[test]
-    fn render_packet_contains_geometry_and_texture_buffers() {
-        let mut generator = WasmMapGenerator::new(12345, 512, 288, 0.08).unwrap();
-        generator.set_draw_scale(1.0);
-
-        let packet = generator.generate_render_packet(5, 10).unwrap();
-        let metadata: serde_json::Value = serde_json::from_str(&packet.metadata_json).unwrap();
-
-        assert_eq!(metadata["image_width"].as_u64(), Some(512));
-        assert_eq!(metadata["image_height"].as_u64(), Some(288));
-        assert!(packet.terrain_positions.len() > 0);
-        assert_eq!(packet.terrain_positions.len(), packet.terrain_normals.len());
-        assert_eq!(
-            packet.terrain_uvs.len() / 2,
-            packet.terrain_positions.len() / 3
-        );
-        assert!(packet.terrain_indices.len() > 0);
-        assert!(packet.albedo_texture.len() > 0);
-        assert_eq!(packet.height_texture.len(), packet.land_mask_texture.len());
-        assert_eq!(packet.height_texture.len(), packet.flux_texture.len());
-        assert_eq!(
-            packet.height_texture.len(),
-            packet.terrain_albedo_texture.len()
-        );
-        assert_eq!(packet.height_texture.len(), packet.roughness_texture.len());
-        assert_eq!(packet.height_texture.len(), packet.ao_texture.len());
-        assert_eq!(
-            packet.height_texture.len(),
-            packet.water_color_texture.len()
-        );
-        assert_eq!(
-            packet.height_texture.len(),
-            packet.water_alpha_texture.len()
-        );
-        assert_eq!(packet.height_texture.len(), packet.coast_glow_texture.len());
-        assert!(packet.label_offsets.len() > 1);
-        assert_eq!(packet.label_offsets.len() - 1, packet.label_sizes.len());
-        assert!(!packet.land_polygon_offsets.is_empty());
-        assert_eq!(
-            packet.land_polygon_positions.len() % 2,
-            0,
-            "land polygon positions should be xy pairs"
-        );
-    }
-
-    #[test]
-    fn plugin_metadata_json_contains_expected_plugins() {
-        let metadata_json = presentation_plugin_metadata_json().unwrap();
-        let metadata: serde_json::Value = serde_json::from_str(&metadata_json).unwrap();
-        let plugins = metadata.as_array().expect("metadata should be an array");
-
-        assert!(plugins.iter().any(|plugin| plugin["id"] == "standard_svg"));
-        assert!(plugins.iter().any(|plugin| plugin["id"] == "webgpu_scene"));
-    }
 }

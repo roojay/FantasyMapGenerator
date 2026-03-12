@@ -4,9 +4,8 @@ import type {
   PathLayerPacket,
   RenderBackend,
   RendererPreference,
-  RendererRuntimeBackend
+  RendererRuntimeBackend,
 } from "@/types/map";
-import { buildStandardMapSvg } from "@/lib/standardMapSvg";
 
 const DEFAULT_LAYERS: MapLayers = {
   slope: true,
@@ -15,7 +14,7 @@ const DEFAULT_LAYERS: MapLayers = {
   border: true,
   city: true,
   town: true,
-  label: true
+  label: true,
 };
 
 const PAPER_BACKGROUND = 0xf7f1e3;
@@ -47,16 +46,42 @@ type RendererStateSnapshot = {
   layerRoots: Partial<Record<keyof MapLayers, import("three").Object3D>>;
   managedRoots: import("three").Object3D[];
   svgMarkup: string | null;
+  svgMarkupCacheKey: string | null;
+  svgRenderDirty: boolean;
+  nativeSvgViewport: SVGGElement | null;
   lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>;
 };
+
+type RenderViewState = {
+  position: [number, number, number];
+  target: [number, number, number];
+  zoom: number;
+};
+
+type SvgBuildWorkerRequest = {
+  type: "build-svg";
+  requestId: number;
+  mapJson: string;
+  layers: MapLayers;
+};
+
+type SvgBuildWorkerResponse =
+  | {
+      type: "success";
+      requestId: number;
+      svgMarkup: string;
+    }
+  | {
+      type: "error";
+      requestId: number;
+      error: string;
+    };
 
 let threeRuntimePromise: Promise<{
   THREE: typeof import("three");
   WebGPURenderer: typeof import("three/webgpu").WebGPURenderer;
   Line2NodeMaterial: typeof import("three/webgpu").Line2NodeMaterial;
   MapControls: typeof import("three/examples/jsm/controls/MapControls.js").MapControls;
-  SVGRenderer: typeof import("three/examples/jsm/renderers/SVGRenderer.js").SVGRenderer;
-  SVGObject: typeof import("three/examples/jsm/renderers/SVGRenderer.js").SVGObject;
   WebGPULine2: typeof import("three/examples/jsm/lines/webgpu/Line2.js").Line2;
   LineGeometry: typeof import("three/examples/jsm/lines/LineGeometry.js").LineGeometry;
   WebGPULineSegments2: typeof import("three/examples/jsm/lines/webgpu/LineSegments2.js").LineSegments2;
@@ -69,35 +94,31 @@ async function loadThreeRuntime() {
       import("three"),
       import("three/webgpu"),
       import("three/examples/jsm/controls/MapControls.js"),
-      import("three/examples/jsm/renderers/SVGRenderer.js"),
       import("three/examples/jsm/lines/webgpu/Line2.js"),
       import("three/examples/jsm/lines/LineGeometry.js"),
       import("three/examples/jsm/lines/webgpu/LineSegments2.js"),
-      import("three/examples/jsm/lines/LineSegmentsGeometry.js")
+      import("three/examples/jsm/lines/LineSegmentsGeometry.js"),
     ]).then(
       ([
         THREE,
         webgpu,
         controls,
-        svgRenderer,
         webgpuLine2,
         lineGeometry,
         webgpuLineSegments2,
-        lineSegmentsGeometry
+        lineSegmentsGeometry,
       ]) => {
         return {
           THREE,
           WebGPURenderer: webgpu.WebGPURenderer,
           Line2NodeMaterial: webgpu.Line2NodeMaterial,
           MapControls: controls.MapControls,
-          SVGRenderer: svgRenderer.SVGRenderer,
-          SVGObject: svgRenderer.SVGObject,
           WebGPULine2: webgpuLine2.Line2,
           LineGeometry: lineGeometry.LineGeometry,
           WebGPULineSegments2: webgpuLineSegments2.LineSegments2,
-          LineSegmentsGeometry: lineSegmentsGeometry.LineSegmentsGeometry
+          LineSegmentsGeometry: lineSegmentsGeometry.LineSegmentsGeometry,
         };
-      }
+      },
     );
   }
 
@@ -128,11 +149,11 @@ function buildTerrainGeometry(runtime: ThreeRuntime, packet: MapScenePacket) {
   const geometry = new runtime.THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
-    new runtime.THREE.BufferAttribute(packetToThreeTriplets(packet.terrain.positions), 3)
+    new runtime.THREE.BufferAttribute(packetToThreeTriplets(packet.terrain.positions), 3),
   );
   geometry.setAttribute(
     "normal",
-    new runtime.THREE.BufferAttribute(packetToThreeTriplets(packet.terrain.normals), 3)
+    new runtime.THREE.BufferAttribute(packetToThreeTriplets(packet.terrain.normals), 3),
   );
   geometry.setAttribute("uv", new runtime.THREE.BufferAttribute(packet.terrain.uvs, 2));
   geometry.setIndex(new runtime.THREE.BufferAttribute(packet.terrain.indices, 1));
@@ -166,7 +187,13 @@ function pixelOffset(width: number, x: number, y: number) {
   return (y * width + x) * 4;
 }
 
-function sampleTextureChannel(data: Uint8Array, width: number, height: number, x: number, y: number) {
+function sampleTextureChannel(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+) {
   const clampedX = Math.max(0, Math.min(width - 1, x));
   const clampedY = Math.max(0, Math.min(height - 1, y));
   return (data[pixelOffset(width, clampedX, clampedY)] ?? 0) / 255;
@@ -176,7 +203,13 @@ function sampleMaskTexture(data: Uint8Array, width: number, height: number, x: n
   return sampleTextureChannel(data, width, height, x, y) > 0.5 ? 1 : 0;
 }
 
-function coastalStrengthFromTexture(mask: Uint8Array, width: number, height: number, x: number, y: number) {
+function coastalStrengthFromTexture(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+) {
   const center = sampleMaskTexture(mask, width, height, x, y);
   let delta = 0;
   for (let oy = -1; oy <= 1; oy += 1) {
@@ -188,17 +221,30 @@ function coastalStrengthFromTexture(mask: Uint8Array, width: number, height: num
   return clamp01(delta / 8);
 }
 
-function mixColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+function mixColor(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number,
+): [number, number, number] {
   const amount = clamp01(t);
   return [
     Math.round(a[0] + (b[0] - a[0]) * amount),
     Math.round(a[1] + (b[1] - a[1]) * amount),
-    Math.round(a[2] + (b[2] - a[2]) * amount)
+    Math.round(a[2] + (b[2] - a[2]) * amount),
   ];
 }
 
 function applyContrast(value: number, contrast: number) {
   return clamp01((value - 0.5) * contrast + 0.5);
+}
+
+function hashString(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function getTextureMaxAnisotropy(renderer: any) {
@@ -213,7 +259,13 @@ function configureTextureForRenderer(texture: import("three").Texture, renderer:
   texture.anisotropy = Math.max(1, getTextureMaxAnisotropy(renderer));
 }
 
-function dataTexture(runtime: ThreeRuntime, data: Uint8Array, width: number, height: number, srgb = false) {
+function dataTexture(
+  runtime: ThreeRuntime,
+  data: Uint8Array,
+  width: number,
+  height: number,
+  srgb = false,
+) {
   const texture = new runtime.THREE.DataTexture(data, width, height, runtime.THREE.RGBAFormat);
   texture.flipY = true;
   texture.wrapS = runtime.THREE.ClampToEdgeWrapping;
@@ -236,7 +288,7 @@ function disposeMaterial(
     bumpMap?: import("three").Texture | null;
     emissiveMap?: import("three").Texture | null;
     roughnessMap?: import("three").Texture | null;
-  }
+  },
 ) {
   const textures = new Set<import("three").Texture>();
   if (material.map) textures.add(material.map);
@@ -281,20 +333,40 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
       let color: [number, number, number] = [
         sourceAlbedo[offset] ?? 0,
         sourceAlbedo[offset + 1] ?? 0,
-        sourceAlbedo[offset + 2] ?? 0
+        sourceAlbedo[offset + 2] ?? 0,
       ];
 
       if (isLand) {
         color = [
           Math.round(applyContrast(color[0] / 255, 1.08) * 255),
           Math.round(applyContrast(color[1] / 255, 1.1) * 255),
-          Math.round(applyContrast(color[2] / 255, 1.06) * 255)
+          Math.round(applyContrast(color[2] / 255, 1.06) * 255),
         ];
-        color = mixColor(color, [86, 110, 53], clamp01((0.58 - Math.abs(heightValue - 0.34)) * 0.58 + fluxValue * 0.14));
-        color = mixColor(color, [172, 152, 101], clamp01((0.18 - heightValue) * 3.1) * (1 - fluxValue * 0.7));
-        color = mixColor(color, [98, 96, 101], clamp01(relief * 0.68 + Math.max(0, heightValue - 0.58) * 0.6));
-        color = mixColor(color, [242, 244, 247], clamp01((heightValue - 0.78) * 3.5 + relief * 0.2));
-        color = mixColor(color, [201, 190, 145], clamp01(coast * 0.18 + Math.max(0, 0.1 - heightValue) * 2.3));
+        color = mixColor(
+          color,
+          [86, 110, 53],
+          clamp01((0.58 - Math.abs(heightValue - 0.34)) * 0.58 + fluxValue * 0.14),
+        );
+        color = mixColor(
+          color,
+          [172, 152, 101],
+          clamp01((0.18 - heightValue) * 3.1) * (1 - fluxValue * 0.7),
+        );
+        color = mixColor(
+          color,
+          [98, 96, 101],
+          clamp01(relief * 0.68 + Math.max(0, heightValue - 0.58) * 0.6),
+        );
+        color = mixColor(
+          color,
+          [242, 244, 247],
+          clamp01((heightValue - 0.78) * 3.5 + relief * 0.2),
+        );
+        color = mixColor(
+          color,
+          [201, 190, 145],
+          clamp01(coast * 0.18 + Math.max(0, 0.1 - heightValue) * 2.3),
+        );
       } else {
         color = mixColor(color, [18, 44, 68], 0.34);
       }
@@ -356,7 +428,7 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
     ao: dataTexture(runtime, ao, width, height),
     waterColor: dataTexture(runtime, waterColor, width, height, true),
     waterAlpha: dataTexture(runtime, waterAlpha, width, height),
-    coastGlow: dataTexture(runtime, coastGlow, width, height)
+    coastGlow: dataTexture(runtime, coastGlow, width, height),
   };
 }
 
@@ -365,7 +437,7 @@ function buildOverlayPlane(
   width: number,
   height: number,
   z: number,
-  material: import("three").Material
+  material: import("three").Material,
 ) {
   const mesh = new runtime.THREE.Mesh(new runtime.THREE.PlaneGeometry(width, height), material);
   mesh.position.set(0, 0, z);
@@ -381,14 +453,14 @@ function buildCoastGlowMaterial(runtime: ThreeRuntime, alphaMap: import("three")
     opacity: 0.5,
     transparent: true,
     blending: runtime.THREE.AdditiveBlending,
-    toneMapped: false
+    toneMapped: false,
   });
 }
 
 function buildWaterMaterial(
   runtime: ThreeRuntime,
   colorMap: import("three").Texture,
-  alphaMap: import("three").Texture
+  alphaMap: import("three").Texture,
 ) {
   return new runtime.THREE.MeshStandardMaterial({
     map: colorMap,
@@ -401,7 +473,7 @@ function buildWaterMaterial(
     opacity: 0.94,
     depthWrite: false,
     roughness: 0.22,
-    metalness: 0.02
+    metalness: 0.02,
   });
 }
 
@@ -420,7 +492,7 @@ async function svgMarkupToTexture(
   runtime: ThreeRuntime,
   svgMarkup: string,
   width: number,
-  height: number
+  height: number,
 ) {
   const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -459,22 +531,38 @@ async function svgMarkupToTexture(
   }
 }
 
-function svgMarkupToElement(svgMarkup: string) {
+function svgMarkupToRoot(svgMarkup: string) {
   const parser = new DOMParser();
   const documentNode = parser.parseFromString(svgMarkup, "image/svg+xml");
   const svgElement = documentNode.documentElement;
   if (!(svgElement instanceof SVGSVGElement)) {
-    throw new Error("Failed to parse SVG markup into an SVG element");
+    throw new Error("Failed to parse SVG markup into an SVG root");
   }
 
-  const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  group.setAttribute("overflow", "visible");
+  return document.importNode(svgElement, true) as SVGSVGElement;
+}
 
-  for (const child of Array.from(svgElement.childNodes)) {
-    group.appendChild(document.importNode(child, true));
-  }
+function createNativeSvgRenderer() {
+  const domElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  domElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  domElement.setAttribute("overflow", "hidden");
+  domElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
 
-  return group;
+  return {
+    domElement,
+    setClearColor() {},
+    setPixelRatio() {},
+    setSize(width: number, height: number) {
+      domElement.setAttribute("width", `${Math.max(1, width)}`);
+      domElement.setAttribute("height", `${Math.max(1, height)}`);
+      domElement.style.width = "100%";
+      domElement.style.height = "100%";
+    },
+    render() {},
+    dispose() {
+      domElement.replaceChildren();
+    },
+  };
 }
 
 function disposeObject(root: import("three").Object3D) {
@@ -486,10 +574,14 @@ function disposeObject(root: import("three").Object3D) {
 
     if (Array.isArray(mesh.material)) {
       for (const material of mesh.material) {
-        disposeMaterial(material as import("three").Material & { map?: import("three").Texture | null });
+        disposeMaterial(
+          material as import("three").Material & { map?: import("three").Texture | null },
+        );
       }
     } else if (mesh.material && "dispose" in mesh.material) {
-      disposeMaterial(mesh.material as import("three").Material & { map?: import("three").Texture | null });
+      disposeMaterial(
+        mesh.material as import("three").Material & { map?: import("three").Texture | null },
+      );
     }
   });
 }
@@ -504,6 +596,8 @@ function resolveLabelFontFamily(fontface: string) {
 export class FantasyMapThreeRenderer {
   private stage: HTMLDivElement;
   private runtime: ThreeRuntime | null = null;
+  private modeSnapshots: Partial<Record<RenderBackend, RendererStateSnapshot>> = {};
+  private modeDirty: Partial<Record<RenderBackend, boolean>> = { svg: true, webgpu: true };
   private renderer: any = null;
   private controls: any = null;
   private scene: any = null;
@@ -515,6 +609,20 @@ export class FantasyMapThreeRenderer {
   private layerRoots: Partial<Record<keyof MapLayers, import("three").Object3D>> = {};
   private managedRoots: import("three").Object3D[] = [];
   private svgMarkup: string | null = null;
+  private svgMarkupCacheKey: string | null = null;
+  private svgRenderDirty = true;
+  private nativeSvgViewport: SVGGElement | null = null;
+  private svgMarkupPromise: Promise<string> | null = null;
+  private svgMarkupPromiseKey: string | null = null;
+  private svgWorker: Worker | null = null;
+  private svgWorkerRequestId = 0;
+  private readonly svgWorkerPending = new Map<
+    number,
+    {
+      resolve: (svgMarkup: string) => void;
+      reject: (error: Error) => void;
+    }
+  >();
   private lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }> = [];
 
   constructor(stage: HTMLDivElement) {
@@ -554,18 +662,142 @@ export class FantasyMapThreeRenderer {
 
     return {
       width: this.packet.metadata.imageWidth,
-      height: this.packet.metadata.imageHeight
+      height: this.packet.metadata.imageHeight,
     };
+  }
+
+  private ensureSvgWorker() {
+    if (!this.svgWorker) {
+      this.svgWorker = new Worker(new URL("../workers/svgRender.worker.ts", import.meta.url), {
+        type: "module",
+      });
+      this.svgWorker.addEventListener("message", this.handleSvgWorkerMessage);
+      this.svgWorker.addEventListener("error", this.handleSvgWorkerError);
+    }
+
+    return this.svgWorker;
+  }
+
+  private readonly handleSvgWorkerMessage = (event: MessageEvent<SvgBuildWorkerResponse>) => {
+    const pending = this.svgWorkerPending.get(event.data.requestId);
+    if (!pending) {
+      return;
+    }
+
+    this.svgWorkerPending.delete(event.data.requestId);
+
+    if (event.data.type === "success") {
+      pending.resolve(event.data.svgMarkup);
+      return;
+    }
+
+    pending.reject(new Error(event.data.error));
+  };
+
+  private readonly handleSvgWorkerError = (event: ErrorEvent) => {
+    const message = event.message || "SVG worker failed";
+    for (const pending of this.svgWorkerPending.values()) {
+      pending.reject(new Error(message));
+    }
+    this.svgWorkerPending.clear();
+  };
+
+  private terminateSvgWorker() {
+    if (!this.svgWorker) {
+      return;
+    }
+
+    this.svgWorker.removeEventListener("message", this.handleSvgWorkerMessage);
+    this.svgWorker.removeEventListener("error", this.handleSvgWorkerError);
+    this.svgWorker.terminate();
+    this.svgWorker = null;
+
+    for (const pending of this.svgWorkerPending.values()) {
+      pending.reject(new Error("SVG worker terminated"));
+    }
+    this.svgWorkerPending.clear();
+  }
+
+  private makeSvgCacheKey() {
+    if (!this.packet?.mapJson) {
+      return null;
+    }
+
+    return JSON.stringify({
+      mapJsonHash: `${this.packet.mapJson.length}:${hashString(this.packet.mapJson)}`,
+      layers: this.layers,
+    });
+  }
+
+  private invalidateRenderCaches() {
+    this.svgMarkup = null;
+    this.svgMarkupCacheKey = null;
+    this.svgMarkupPromise = null;
+    this.svgMarkupPromiseKey = null;
+    this.svgRenderDirty = true;
+    this.modeDirty.svg = true;
+    this.modeDirty.webgpu = true;
+  }
+
+  private captureViewState(): RenderViewState | null {
+    if (!this.camera || !this.controls) {
+      return null;
+    }
+
+    return {
+      position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      target: [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+      zoom: this.camera.zoom,
+    };
+  }
+
+  private applyViewState(viewState: RenderViewState | null) {
+    if (!viewState || !this.camera || !this.controls) {
+      return;
+    }
+
+    this.camera.position.set(...viewState.position);
+    this.camera.zoom = viewState.zoom;
+    this.camera.updateProjectionMatrix();
+    this.controls.target.set(...viewState.target);
+    this.controls.update();
+  }
+
+  private setSnapshotVisibility(snapshot: RendererStateSnapshot | null, visible: boolean) {
+    const domElement = snapshot?.renderer?.domElement as HTMLElement | SVGElement | undefined;
+    if (!domElement) {
+      return;
+    }
+
+    domElement.style.opacity = visible ? "1" : "0";
+    domElement.style.pointerEvents = visible ? "" : "none";
+    domElement.style.visibility = visible ? "visible" : "hidden";
+  }
+
+  private stashSnapshot(snapshot: RendererStateSnapshot | null) {
+    if (!snapshot?.renderMode) {
+      return;
+    }
+
+    this.setSnapshotVisibility(snapshot, false);
+    this.modeSnapshots[snapshot.renderMode] = snapshot;
+  }
+
+  private disposeCachedSnapshots() {
+    for (const snapshot of Object.values(this.modeSnapshots)) {
+      if (snapshot) {
+        this.disposeSnapshot(snapshot);
+      }
+    }
+    this.modeSnapshots = {};
   }
 
   async initialize(preferredMode: RendererPreference = "auto") {
     this.runtime = await loadThreeRuntime();
     await this.detectAvailableModes();
-    const previousState = this.snapshotState();
-
-    if (previousState) {
-      this.clearStateReferences();
-    }
+    const activeSnapshot = this.snapshotState();
+    const activeMode = this.renderMode;
+    const viewState = this.captureViewState();
 
     const candidates =
       preferredMode === "auto"
@@ -576,20 +808,66 @@ export class FantasyMapThreeRenderer {
 
     for (const mode of candidates) {
       try {
-        await this.initializeMode(mode, Boolean(previousState));
-        if (previousState) {
-          this.disposeSnapshot(previousState);
+        if (mode === activeMode && activeSnapshot) {
+          if (this.modeDirty[mode] && this.packet) {
+            await this.rebuildScene();
+            this.modeDirty[mode] = false;
+            this.resize();
+          }
+
+          return {
+            mode,
+            availableModes: [...this.availableModes],
+          };
         }
+
+        const cachedSnapshot = this.modeSnapshots[mode];
+
+        if (cachedSnapshot) {
+          this.clearStateReferences();
+          this.restoreSnapshot(cachedSnapshot);
+          delete this.modeSnapshots[mode];
+
+          if (this.modeDirty[mode] && this.packet) {
+            await this.rebuildScene();
+            this.modeDirty[mode] = false;
+          }
+
+          this.applyViewState(viewState);
+          this.resize();
+          this.setSnapshotVisibility(cachedSnapshot, true);
+          this.stashSnapshot(activeSnapshot);
+
+          return {
+            mode,
+            availableModes: [...this.availableModes],
+          };
+        }
+
+        this.clearStateReferences();
+        await this.initializeMode(mode, Boolean(activeSnapshot));
+        this.applyViewState(viewState);
+        this.modeDirty[mode] = false;
+        this.resize();
+        this.stashSnapshot(activeSnapshot);
+
         return {
           mode,
-          availableModes: [...this.availableModes]
+          availableModes: [...this.availableModes],
         };
       } catch (error) {
-        this.cleanup();
+        const failedSnapshot = this.snapshotState();
+        this.clearStateReferences();
+        if (failedSnapshot) {
+          this.disposeSnapshot(failedSnapshot);
+        }
+
+        if (activeSnapshot) {
+          this.restoreSnapshot(activeSnapshot);
+          this.setSnapshotVisibility(activeSnapshot, true);
+        }
+
         if (mode === candidates[candidates.length - 1]) {
-          if (previousState) {
-            this.restoreSnapshot(previousState);
-          }
           throw error;
         }
       }
@@ -608,16 +886,19 @@ export class FantasyMapThreeRenderer {
     if (snapshot) {
       this.disposeSnapshot(snapshot);
     }
+    this.disposeCachedSnapshots();
+    this.terminateSvgWorker();
   }
 
   loadMapData(packet: MapScenePacket) {
     this.packet = packet;
+    this.invalidateRenderCaches();
+    this.disposeCachedSnapshots();
   }
 
   setLayers(layers: MapLayers) {
     this.layers = { ...layers };
-    this.applyLayerVisibility();
-    this.draw();
+    this.invalidateRenderCaches();
   }
 
   async render() {
@@ -630,8 +911,8 @@ export class FantasyMapThreeRenderer {
     }
 
     await this.rebuildScene();
+    this.modeDirty[this.renderMode] = false;
     this.resize();
-    this.fitToScreen();
   }
 
   resize() {
@@ -661,10 +942,9 @@ export class FantasyMapThreeRenderer {
 
     const width = Math.max(1, this.stage.clientWidth || this.packet.metadata.imageWidth);
     const height = Math.max(1, this.stage.clientHeight || this.packet.metadata.imageHeight);
-    const zoom = Math.min(
-      width / this.packet.metadata.imageWidth,
-      height / this.packet.metadata.imageHeight
-    ) * FIT_PADDING;
+    const zoom =
+      Math.min(width / this.packet.metadata.imageWidth, height / this.packet.metadata.imageHeight) *
+      FIT_PADDING;
 
     this.camera.position.set(0, 0, CAMERA_DISTANCE);
     this.camera.zoom = zoom;
@@ -690,7 +970,11 @@ export class FantasyMapThreeRenderer {
 
     if (this.renderMode === "svg") {
       const svg = await this.buildSVGString();
-      return rasterizeSvgToPng(svg, this.packet.metadata.imageWidth, this.packet.metadata.imageHeight);
+      return rasterizeSvgToPng(
+        svg,
+        this.packet.metadata.imageWidth,
+        this.packet.metadata.imageHeight,
+      );
     }
 
     if (!this.renderer) {
@@ -706,11 +990,20 @@ export class FantasyMapThreeRenderer {
       throw new Error("No map data to export");
     }
 
-    if (this.renderMode === "svg" && this.svgMarkup) {
+    const cacheKey = this.makeSvgCacheKey();
+    if (this.svgMarkup && this.svgMarkupCacheKey && this.svgMarkupCacheKey === cacheKey) {
       return this.svgMarkup;
     }
 
     return this.buildMapSvgMarkup();
+  }
+
+  primeSvgMarkup() {
+    if (!this.packet?.mapJson) {
+      return;
+    }
+
+    void this.buildMapSvgMarkup().catch(() => undefined);
   }
 
   private async detectAvailableModes() {
@@ -740,13 +1033,22 @@ export class FantasyMapThreeRenderer {
     const height = Math.max(1, this.stage.clientHeight || this.packet?.metadata.imageHeight || 1);
 
     this.scene = new this.runtime.THREE.Scene();
-    this.scene.background = new this.runtime.THREE.Color(mode === "svg" ? PAPER_BACKGROUND : WEBGPU_BACKGROUND);
-    this.camera = new this.runtime.THREE.OrthographicCamera(-width / 2, width / 2, height / 2, -height / 2, 1, 4000);
+    this.scene.background = new this.runtime.THREE.Color(
+      mode === "svg" ? PAPER_BACKGROUND : WEBGPU_BACKGROUND,
+    );
+    this.camera = new this.runtime.THREE.OrthographicCamera(
+      -width / 2,
+      width / 2,
+      height / 2,
+      -height / 2,
+      1,
+      4000,
+    );
     this.camera.position.set(0, 0, CAMERA_DISTANCE);
     this.camera.lookAt(0, 0, 0);
 
     if (mode === "svg") {
-      this.renderer = new this.runtime.SVGRenderer();
+      this.renderer = createNativeSvgRenderer();
       this.renderer.setClearColor(PAPER_BACKGROUND);
       this.renderer.domElement.classList.add("three-map-stage", "pointer-events-auto");
       if (keepPreviousFrameVisible) {
@@ -757,7 +1059,7 @@ export class FantasyMapThreeRenderer {
     } else {
       this.renderer = new this.runtime.WebGPURenderer({
         antialias: true,
-        alpha: false
+        alpha: false,
       });
 
       if ("init" in this.renderer && typeof this.renderer.init === "function") {
@@ -786,7 +1088,6 @@ export class FantasyMapThreeRenderer {
     });
 
     this.renderMode = mode;
-    // SVGRenderer needs a viewport size before the first render pass or it can emit translate(NaN,NaN).
     this.resize();
     if (this.packet) {
       await this.rebuildScene();
@@ -796,7 +1097,8 @@ export class FantasyMapThreeRenderer {
     if (
       keepPreviousFrameVisible &&
       this.renderer?.domElement &&
-      (this.renderer.domElement instanceof HTMLElement || this.renderer.domElement instanceof SVGElement)
+      (this.renderer.domElement instanceof HTMLElement ||
+        this.renderer.domElement instanceof SVGElement)
     ) {
       this.renderer.domElement.style.opacity = "1";
       this.renderer.domElement.style.pointerEvents = "";
@@ -804,7 +1106,13 @@ export class FantasyMapThreeRenderer {
   }
 
   private snapshotState(): RendererStateSnapshot | null {
-    if (!this.renderer && !this.controls && !this.scene && !this.camera && this.managedRoots.length === 0) {
+    if (
+      !this.renderer &&
+      !this.controls &&
+      !this.scene &&
+      !this.camera &&
+      this.managedRoots.length === 0
+    ) {
       return null;
     }
 
@@ -817,7 +1125,10 @@ export class FantasyMapThreeRenderer {
       layerRoots: this.layerRoots,
       managedRoots: this.managedRoots,
       svgMarkup: this.svgMarkup,
-      lineMaterials: this.lineMaterials
+      svgMarkupCacheKey: this.svgMarkupCacheKey,
+      svgRenderDirty: this.svgRenderDirty,
+      nativeSvgViewport: this.nativeSvgViewport,
+      lineMaterials: this.lineMaterials,
     };
   }
 
@@ -830,6 +1141,9 @@ export class FantasyMapThreeRenderer {
     this.layerRoots = {};
     this.managedRoots = [];
     this.svgMarkup = null;
+    this.svgMarkupCacheKey = null;
+    this.svgRenderDirty = true;
+    this.nativeSvgViewport = null;
     this.lineMaterials = [];
   }
 
@@ -842,6 +1156,13 @@ export class FantasyMapThreeRenderer {
     this.layerRoots = snapshot.layerRoots;
     this.managedRoots = snapshot.managedRoots;
     this.svgMarkup = snapshot.svgMarkup;
+    this.svgMarkupCacheKey = snapshot.svgMarkupCacheKey;
+    this.svgRenderDirty = snapshot.svgRenderDirty;
+    this.nativeSvgViewport =
+      snapshot.nativeSvgViewport ??
+      ((snapshot.renderer?.domElement as Element | undefined)?.querySelector?.(
+        '[data-svg-viewport="true"]',
+      ) as SVGGElement | null);
     this.lineMaterials = snapshot.lineMaterials;
   }
 
@@ -872,8 +1193,12 @@ export class FantasyMapThreeRenderer {
     this.managedRoots = [];
     this.layerRoots = {};
     this.lineMaterials = [];
+    this.svgRenderDirty = true;
+    this.nativeSvgViewport = null;
 
-    const { scene, layerRoots, roots, lineMaterials } = await this.createSceneGraph(this.renderMode);
+    const { scene, layerRoots, roots, lineMaterials } = await this.createSceneGraph(
+      this.renderMode,
+    );
     this.scene = scene;
     this.layerRoots = layerRoots;
     this.managedRoots = roots;
@@ -883,45 +1208,92 @@ export class FantasyMapThreeRenderer {
     this.draw();
   }
 
+  private mountNativeSvgMarkup(svgMarkup: string) {
+    const svgRoot = this.renderer?.domElement;
+    if (!(svgRoot instanceof SVGSVGElement) || !this.packet) {
+      throw new Error("Native SVG renderer is not ready");
+    }
+
+    const sourceRoot = svgMarkupToRoot(svgMarkup);
+    const width = this.packet.metadata.imageWidth;
+    const height = this.packet.metadata.imageHeight;
+    const viewport = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    viewport.setAttribute("data-svg-viewport", "true");
+
+    svgRoot.replaceChildren();
+    svgRoot.setAttribute("viewBox", sourceRoot.getAttribute("viewBox") ?? `0 0 ${width} ${height}`);
+    svgRoot.setAttribute(
+      "preserveAspectRatio",
+      sourceRoot.getAttribute("preserveAspectRatio") ?? "xMidYMid meet",
+    );
+    svgRoot.setAttribute("overflow", sourceRoot.getAttribute("overflow") ?? "hidden");
+    svgRoot.setAttribute("width", `${width}`);
+    svgRoot.setAttribute("height", `${height}`);
+
+    for (const attributeName of ["role", "aria-label"]) {
+      const value = sourceRoot.getAttribute(attributeName);
+      if (value) {
+        svgRoot.setAttribute(attributeName, value);
+      } else {
+        svgRoot.removeAttribute(attributeName);
+      }
+    }
+
+    for (const child of Array.from(sourceRoot.childNodes)) {
+      const imported = document.importNode(child, true);
+      if (
+        imported instanceof SVGElement &&
+        ["defs", "style", "title", "desc", "metadata"].includes(imported.tagName)
+      ) {
+        svgRoot.appendChild(imported);
+        continue;
+      }
+      viewport.appendChild(imported);
+    }
+
+    svgRoot.appendChild(viewport);
+    this.nativeSvgViewport = viewport;
+    this.svgRenderDirty = false;
+    this.applySvgViewportTransform();
+  }
+
   private async createSceneGraph(mode: RenderBackend) {
     if (!this.runtime || !this.packet || !this.camera) {
       throw new Error("Renderer is not ready");
     }
 
     const scene = new this.runtime.THREE.Scene();
-    scene.background = new this.runtime.THREE.Color(mode === "svg" ? PAPER_BACKGROUND : WEBGPU_BACKGROUND);
+    scene.background = new this.runtime.THREE.Color(
+      mode === "svg" ? PAPER_BACKGROUND : WEBGPU_BACKGROUND,
+    );
     const roots: import("three").Object3D[] = [];
     const layerRoots: Partial<Record<keyof MapLayers, import("three").Object3D>> = {};
     const lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }> = [];
 
     if (mode === "svg") {
-      const svgObject = new this.runtime.SVGObject(svgMarkupToElement(await this.buildMapSvgMarkup()));
-      svgObject.position.set(this.packet.metadata.imageWidth / -2, this.packet.metadata.imageHeight / 2, 0);
-      svgObject.renderOrder = 1;
-      scene.add(svgObject);
-      roots.push(svgObject);
+      this.mountNativeSvgMarkup(await this.buildMapSvgMarkup());
       return { scene, layerRoots, roots, lineMaterials };
     }
 
     const useTextureFallback = this.packet.landPolygonOffsets.length <= 1;
 
-    if (useTextureFallback && this.packet.legacyJson) {
+    if (useTextureFallback && this.packet.mapJson) {
       const texture = await svgMarkupToTexture(
         this.runtime,
         await this.buildMapSvgMarkup(),
         this.packet.metadata.imageWidth,
-        this.packet.metadata.imageHeight
+        this.packet.metadata.imageHeight,
       );
 
       const plane = new this.runtime.THREE.Mesh(
         new this.runtime.THREE.PlaneGeometry(
           this.packet.metadata.imageWidth,
-          this.packet.metadata.imageHeight
+          this.packet.metadata.imageHeight,
         ),
         new this.runtime.THREE.MeshBasicMaterial({
           map: texture,
-          toneMapped: false
-        })
+          toneMapped: false,
+        }),
       );
       plane.renderOrder = 1;
       scene.add(plane);
@@ -931,8 +1303,11 @@ export class FantasyMapThreeRenderer {
     }
 
     const backgroundPlane = new this.runtime.THREE.Mesh(
-      new this.runtime.THREE.PlaneGeometry(this.packet.metadata.imageWidth, this.packet.metadata.imageHeight),
-      new this.runtime.THREE.MeshBasicMaterial({ color: WEBGPU_SURFACE })
+      new this.runtime.THREE.PlaneGeometry(
+        this.packet.metadata.imageWidth,
+        this.packet.metadata.imageHeight,
+      ),
+      new this.runtime.THREE.MeshBasicMaterial({ color: WEBGPU_SURFACE }),
     );
     backgroundPlane.position.set(0, 0, -(this.packet.metadata.elevationScale + 32));
     scene.add(backgroundPlane);
@@ -960,45 +1335,45 @@ export class FantasyMapThreeRenderer {
               this.packet.textures.terrainAlbedo,
               this.packet.metadata.terrainWidth,
               this.packet.metadata.terrainHeight,
-              true
+              true,
             ),
             height: dataTexture(
               this.runtime,
               this.packet.textures.height,
               this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight
+              this.packet.metadata.terrainHeight,
             ),
             roughness: dataTexture(
               this.runtime,
               this.packet.textures.roughness,
               this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight
+              this.packet.metadata.terrainHeight,
             ),
             ao: dataTexture(
               this.runtime,
               this.packet.textures.ao,
               this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight
+              this.packet.metadata.terrainHeight,
             ),
             waterColor: dataTexture(
               this.runtime,
               this.packet.textures.waterColor,
               this.packet.metadata.terrainWidth,
               this.packet.metadata.terrainHeight,
-              true
+              true,
             ),
             waterAlpha: dataTexture(
               this.runtime,
               this.packet.textures.waterAlpha,
               this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight
+              this.packet.metadata.terrainHeight,
             ),
             coastGlow: dataTexture(
               this.runtime,
               this.packet.textures.coastGlow,
               this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight
-            )
+              this.packet.metadata.terrainHeight,
+            ),
           }
         : buildSurfaceTextures(this.runtime, this.packet);
     configureTextureForRenderer(surfaceTextures.terrainAlbedo, this.renderer);
@@ -1016,8 +1391,8 @@ export class FantasyMapThreeRenderer {
         surfaceTextures.terrainAlbedo,
         surfaceTextures.height,
         surfaceTextures.roughness,
-        surfaceTextures.ao
-      )
+        surfaceTextures.ao,
+      ),
     );
     terrainMesh.renderOrder = 1;
     scene.add(terrainMesh);
@@ -1028,7 +1403,7 @@ export class FantasyMapThreeRenderer {
       this.packet.metadata.imageWidth,
       this.packet.metadata.imageHeight,
       0.45,
-      buildWaterMaterial(this.runtime, surfaceTextures.waterColor, surfaceTextures.waterAlpha)
+      buildWaterMaterial(this.runtime, surfaceTextures.waterColor, surfaceTextures.waterAlpha),
     );
     waterMesh.renderOrder = 2;
     scene.add(waterMesh);
@@ -1039,18 +1414,22 @@ export class FantasyMapThreeRenderer {
       this.packet.metadata.imageWidth,
       this.packet.metadata.imageHeight,
       0.65,
-      buildCoastGlowMaterial(this.runtime, surfaceTextures.coastGlow)
+      buildCoastGlowMaterial(this.runtime, surfaceTextures.coastGlow),
     );
     coastGlowMesh.renderOrder = 3;
     scene.add(coastGlowMesh);
     roots.push(coastGlowMesh);
 
-    const slopeRoot = this.createLineGroup(this.packet.layers.slopeSegments, {
-      color: SLOPE_COLOR,
-      opacity: 0.18,
-      linewidth: 0.72 * this.packet.metadata.drawScale,
-      dashed: false
-    }, lineMaterials);
+    const slopeRoot = this.createLineGroup(
+      this.packet.layers.slopeSegments,
+      {
+        color: SLOPE_COLOR,
+        opacity: 0.18,
+        linewidth: 0.72 * this.packet.metadata.drawScale,
+        dashed: false,
+      },
+      lineMaterials,
+    );
     if (slopeRoot) {
       setRenderOrder(slopeRoot, 10);
       layerRoots.slope = slopeRoot;
@@ -1058,20 +1437,24 @@ export class FantasyMapThreeRenderer {
       roots.push(slopeRoot);
     }
 
-    const riverRoot = this.createPathGroup(this.packet.layers.river, [
-      {
-        color: RIVER_GLOW,
-        opacity: 0.28,
-        linewidth: 4.4 * this.packet.metadata.drawScale,
-        dashed: false
-      },
-      {
-        color: RIVER_COLOR,
-        opacity: 0.95,
-        linewidth: 2.5 * this.packet.metadata.drawScale,
-        dashed: false
-      }
-    ], lineMaterials);
+    const riverRoot = this.createPathGroup(
+      this.packet.layers.river,
+      [
+        {
+          color: RIVER_GLOW,
+          opacity: 0.28,
+          linewidth: 4.4 * this.packet.metadata.drawScale,
+          dashed: false,
+        },
+        {
+          color: RIVER_COLOR,
+          opacity: 0.95,
+          linewidth: 2.5 * this.packet.metadata.drawScale,
+          dashed: false,
+        },
+      ],
+      lineMaterials,
+    );
     if (riverRoot) {
       setRenderOrder(riverRoot, 20);
       layerRoots.river = riverRoot;
@@ -1086,16 +1469,16 @@ export class FantasyMapThreeRenderer {
           color: COAST_GLOW_COLOR,
           opacity: 0.18,
           linewidth: 3.8 * this.packet.metadata.drawScale,
-          dashed: false
+          dashed: false,
         },
         {
           color: COAST_COLOR,
           opacity: 0.7,
           linewidth: 1.1 * this.packet.metadata.drawScale,
-          dashed: false
-        }
+          dashed: false,
+        },
       ],
-      lineMaterials
+      lineMaterials,
     );
     if (contourRoot) {
       setRenderOrder(contourRoot, 30);
@@ -1104,20 +1487,24 @@ export class FantasyMapThreeRenderer {
       roots.push(contourRoot);
     }
 
-    const borderRoot = this.createPathGroup(this.packet.layers.border, [
-      {
-        color: BORDER_UNDER_COLOR,
-        opacity: 1,
-        linewidth: 6 * this.packet.metadata.drawScale,
-        dashed: false
-      },
-      {
-        color: BORDER_COLOR,
-        opacity: 0.92,
-        linewidth: 3.1 * this.packet.metadata.drawScale,
-        dashed: true
-      }
-    ], lineMaterials);
+    const borderRoot = this.createPathGroup(
+      this.packet.layers.border,
+      [
+        {
+          color: BORDER_UNDER_COLOR,
+          opacity: 1,
+          linewidth: 6 * this.packet.metadata.drawScale,
+          dashed: false,
+        },
+        {
+          color: BORDER_COLOR,
+          opacity: 0.92,
+          linewidth: 3.1 * this.packet.metadata.drawScale,
+          dashed: true,
+        },
+      ],
+      lineMaterials,
+    );
     if (borderRoot) {
       setRenderOrder(borderRoot, 40);
       layerRoots.border = borderRoot;
@@ -1151,12 +1538,15 @@ export class FantasyMapThreeRenderer {
     albedoTexture: import("three").Texture,
     heightTexture: import("three").Texture,
     roughnessTexture: import("three").Texture,
-    aoTexture: import("three").Texture
+    aoTexture: import("three").Texture,
   ) {
     const { THREE } = this.runtime!;
     const uvAttribute = terrainGeometry.getAttribute("uv");
     if (uvAttribute && !terrainGeometry.getAttribute("uv2")) {
-      terrainGeometry.setAttribute("uv2", new THREE.BufferAttribute(new Float32Array(uvAttribute.array as ArrayLike<number>), 2));
+      terrainGeometry.setAttribute(
+        "uv2",
+        new THREE.BufferAttribute(new Float32Array(uvAttribute.array as ArrayLike<number>), 2),
+      );
     }
 
     return new THREE.MeshStandardMaterial({
@@ -1169,14 +1559,14 @@ export class FantasyMapThreeRenderer {
       aoMap: aoTexture,
       aoMapIntensity: 0.45,
       metalness: 0,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
     });
   }
 
   private createLineGroup(
     packetPositions: Float32Array,
     style: { color: number; opacity: number; linewidth: number; dashed: boolean },
-    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>
+    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>,
   ) {
     if (!this.runtime || packetPositions.length === 0) return null;
 
@@ -1192,7 +1582,7 @@ export class FantasyMapThreeRenderer {
       opacity: style.opacity,
       dashed: style.dashed,
       dashSize: 4 * this.packet!.metadata.drawScale,
-      gapSize: 5 * this.packet!.metadata.drawScale
+      gapSize: 5 * this.packet!.metadata.drawScale,
     });
     configureOverlayMaterial(material);
     const line = new this.runtime.WebGPULineSegments2(geometry, material);
@@ -1207,7 +1597,7 @@ export class FantasyMapThreeRenderer {
   private createPathGroup(
     layer: PathLayerPacket,
     styles: Array<{ color: number; opacity: number; linewidth: number; dashed: boolean }>,
-    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>
+    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>,
   ) {
     const group = new this.runtime!.THREE.Group();
     let hasLines = false;
@@ -1234,7 +1624,7 @@ export class FantasyMapThreeRenderer {
   private createPolyline(
     packetPositions: Float32Array,
     style: { color: number; opacity: number; linewidth: number; dashed: boolean },
-    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>
+    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>,
   ) {
     if (!this.runtime || packetPositions.length < 6) return null;
 
@@ -1249,7 +1639,7 @@ export class FantasyMapThreeRenderer {
       opacity: style.opacity,
       dashed: style.dashed,
       dashSize: 4 * this.packet!.metadata.drawScale,
-      gapSize: 5 * this.packet!.metadata.drawScale
+      gapSize: 5 * this.packet!.metadata.drawScale,
     });
     configureOverlayMaterial(material);
     const line = new this.runtime.WebGPULine2(geometry, material);
@@ -1269,12 +1659,12 @@ export class FantasyMapThreeRenderer {
     const outer = new this.runtime!.THREE.InstancedMesh(
       new this.runtime!.THREE.CircleGeometry(outerRadius, 32),
       new this.runtime!.THREE.MeshBasicMaterial({ color: CITY_OUTER_COLOR }),
-      positions.length / 3
+      positions.length / 3,
     );
     const inner = new this.runtime!.THREE.InstancedMesh(
       new this.runtime!.THREE.CircleGeometry(innerRadius, 32),
       new this.runtime!.THREE.MeshBasicMaterial({ color: CITY_INNER_COLOR }),
-      positions.length / 3
+      positions.length / 3,
     );
     configureOverlayMaterial(outer.material);
     configureOverlayMaterial(inner.material);
@@ -1303,7 +1693,7 @@ export class FantasyMapThreeRenderer {
     const mesh = new this.runtime!.THREE.InstancedMesh(
       new this.runtime!.THREE.CircleGeometry(radius, 28),
       new this.runtime!.THREE.MeshBasicMaterial({ color: TOWN_COLOR }),
-      positions.length / 3
+      positions.length / 3,
     );
     configureOverlayMaterial(mesh.material);
 
@@ -1327,11 +1717,15 @@ export class FantasyMapThreeRenderer {
       const item = items[index];
       if (!item?.text) continue;
       const anchorIndex = index * 3;
-      const { mesh, offsetX, offsetY } = this.createLabelMesh(item.text, item.fontface, item.fontsize);
+      const { mesh, offsetX, offsetY } = this.createLabelMesh(
+        item.text,
+        item.fontface,
+        item.fontsize,
+      );
       mesh.position.set(
         anchors[anchorIndex] + offsetX,
         anchors[anchorIndex + 1] + offsetY,
-        anchors[anchorIndex + 2] + LABEL_Z_OFFSET
+        anchors[anchorIndex + 2] + LABEL_Z_OFFSET,
       );
       group.add(mesh);
     }
@@ -1396,7 +1790,7 @@ export class FantasyMapThreeRenderer {
       depthWrite: false,
       map: texture,
       toneMapped: false,
-      transparent: true
+      transparent: true,
     });
     configureOverlayMaterial(material);
     const mesh = new this.runtime!.THREE.Mesh(geometry, material);
@@ -1405,12 +1799,14 @@ export class FantasyMapThreeRenderer {
     return {
       mesh,
       offsetX: logicalWidth * 0.5 - drawX,
-      offsetY: drawY - logicalHeight * 0.5
+      offsetY: drawY - logicalHeight * 0.5,
     };
   }
 
   private applyLayerVisibility() {
-    for (const [key, root] of Object.entries(this.layerRoots) as Array<[keyof MapLayers, import("three").Object3D | undefined]>) {
+    for (const [key, root] of Object.entries(this.layerRoots) as Array<
+      [keyof MapLayers, import("three").Object3D | undefined]
+    >) {
       if (!root) continue;
       root.visible = this.layers[key];
     }
@@ -1419,49 +1815,92 @@ export class FantasyMapThreeRenderer {
   private draw() {
     if (!this.renderer || !this.scene || !this.camera) return;
 
-    this.renderer.render(this.scene, this.camera);
     if (this.renderMode === "svg") {
+      if (this.svgRenderDirty && this.svgMarkup) {
+        this.mountNativeSvgMarkup(this.svgMarkup);
+      }
       this.applySvgViewportTransform();
+      return;
     }
+
+    this.renderer.render(this.scene, this.camera);
   }
 
   private applySvgViewportTransform() {
-    const svgRoot = this.renderer?.domElement;
-    if (!(svgRoot instanceof SVGSVGElement) || !this.camera) {
+    if (!this.camera || !this.packet) {
       return;
     }
 
-    const layer = svgRoot.firstElementChild;
-    if (!(layer instanceof SVGGElement)) {
-      return;
-    }
-
-    const translate = layer.getAttribute("transform") ?? "";
-    const match = /translate\(([-+\d.eE]+),([-+\d.eE]+)\)/.exec(translate);
-    if (!match) {
-      return;
-    }
-
-    const tx = Number.parseFloat(match[1]);
-    const ty = Number.parseFloat(match[2]);
-    if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+    const viewport =
+      this.nativeSvgViewport ??
+      ((this.renderer?.domElement as Element | undefined)?.querySelector?.(
+        '[data-svg-viewport="true"]',
+      ) as SVGGElement | null);
+    if (!(viewport instanceof SVGGElement)) {
       return;
     }
 
     const scale = this.camera.zoom;
-    layer.setAttribute("transform", `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
+    const tx =
+      this.camera.right -
+      (this.packet.metadata.imageWidth * 0.5 + this.camera.position.x) * scale;
+    const ty =
+      this.camera.top -
+      (this.packet.metadata.imageHeight * 0.5 - this.camera.position.y) * scale;
+    viewport.setAttribute("transform", `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
   }
 
   private async buildMapSvgMarkup() {
-    if (!this.packet?.legacyJson) {
-      throw new Error("SVG mode requires legacy JSON data");
+    if (!this.packet?.mapJson) {
+      throw new Error("SVG mode requires exported map JSON data");
     }
 
-    const svgMarkup = await buildStandardMapSvg(this.packet.legacyJson, this.layers);
-    this.svgMarkup = svgMarkup;
-    return svgMarkup;
-  }
+    const cacheKey = this.makeSvgCacheKey();
+    if (!cacheKey) {
+      throw new Error("SVG mode requires exported map JSON data");
+    }
 
+    if (this.svgMarkup && this.svgMarkupCacheKey === cacheKey) {
+      return this.svgMarkup;
+    }
+
+    if (this.svgMarkupPromise && this.svgMarkupPromiseKey === cacheKey) {
+      return this.svgMarkupPromise;
+    }
+
+    const worker = this.ensureSvgWorker();
+    const requestId = ++this.svgWorkerRequestId;
+
+    this.svgMarkupPromiseKey = cacheKey;
+    this.svgMarkupPromise = new Promise<string>((resolve, reject) => {
+      this.svgWorkerPending.set(requestId, {
+        resolve: (svgMarkup) => {
+          if (this.svgMarkupPromiseKey === cacheKey) {
+            this.svgMarkup = svgMarkup;
+            this.svgMarkupCacheKey = cacheKey;
+          }
+          this.svgMarkupPromise = null;
+          this.svgMarkupPromiseKey = null;
+          resolve(svgMarkup);
+        },
+        reject: (error) => {
+          this.svgMarkupPromise = null;
+          this.svgMarkupPromiseKey = null;
+          reject(error);
+        },
+      });
+
+      const request: SvgBuildWorkerRequest = {
+        type: "build-svg",
+        requestId,
+        mapJson: this.packet!.mapJson,
+        layers: { ...this.layers },
+      };
+      worker.postMessage(request);
+    });
+
+    return this.svgMarkupPromise;
+  }
 }
 
 async function rasterizeSvgToPng(svgString: string, width: number, height: number) {
