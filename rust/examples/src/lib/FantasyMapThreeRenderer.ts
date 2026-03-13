@@ -24,7 +24,7 @@ const SLOPE_COLOR = 0x24301f;
 const RIVER_COLOR = 0x5fc0df;
 const RIVER_GLOW = 0x9ae6ff;
 const COAST_COLOR = 0x193043;
-const COAST_GLOW_COLOR = 0x8fdfff;
+const COAST_GLOW_COLOR = 0x92f1ee;
 const BORDER_COLOR = 0x1a1e18;
 const BORDER_UNDER_COLOR = 0xf7f1e3;
 const CITY_OUTER_COLOR = 0x1f251c;
@@ -35,6 +35,14 @@ const LABEL_HALO_COLOR = 0xf7f6ef;
 const CAMERA_DISTANCE = 900;
 const FIT_PADDING = 0.92;
 const LABEL_Z_OFFSET = 2.2;
+const MARKER_BASE_Z_OFFSET = 0.82;
+const MARKER_LAYER_Z_STEP = 0.18;
+const MALDIVES_SHORE_COLOR: [number, number, number] = [197, 241, 229];
+const MALDIVES_LAGOON_COLOR: [number, number, number] = [84, 216, 210];
+const MALDIVES_TURQUOISE_COLOR: [number, number, number] = [30, 176, 194];
+const MALDIVES_REEF_BLUE: [number, number, number] = [18, 108, 165];
+const MALDIVES_OUTER_ATOLL: [number, number, number] = [9, 63, 129];
+const MALDIVES_DEEP_OCEAN: [number, number, number] = [3, 30, 84];
 
 type ThreeRuntime = Awaited<ReturnType<typeof loadThreeRuntime>>;
 type RendererStateSnapshot = {
@@ -86,6 +94,9 @@ let threeRuntimePromise: Promise<{
   LineGeometry: typeof import("three/examples/jsm/lines/LineGeometry.js").LineGeometry;
   WebGPULineSegments2: typeof import("three/examples/jsm/lines/webgpu/LineSegments2.js").LineSegments2;
   LineSegmentsGeometry: typeof import("three/examples/jsm/lines/LineSegmentsGeometry.js").LineSegmentsGeometry;
+  MeshStandardNodeMaterial: typeof import("three/webgpu").MeshStandardNodeMaterial;
+  MeshBasicNodeMaterial: typeof import("three/webgpu").MeshBasicNodeMaterial;
+  TSL: typeof import("three/tsl");
 }> | null = null;
 
 async function loadThreeRuntime() {
@@ -93,6 +104,7 @@ async function loadThreeRuntime() {
     threeRuntimePromise = Promise.all([
       import("three"),
       import("three/webgpu"),
+      import("three/tsl"),
       import("three/examples/jsm/controls/MapControls.js"),
       import("three/examples/jsm/lines/webgpu/Line2.js"),
       import("three/examples/jsm/lines/LineGeometry.js"),
@@ -102,6 +114,7 @@ async function loadThreeRuntime() {
       ([
         THREE,
         webgpu,
+        tsl,
         controls,
         webgpuLine2,
         lineGeometry,
@@ -112,11 +125,14 @@ async function loadThreeRuntime() {
           THREE,
           WebGPURenderer: webgpu.WebGPURenderer,
           Line2NodeMaterial: webgpu.Line2NodeMaterial,
+          MeshStandardNodeMaterial: webgpu.MeshStandardNodeMaterial,
+          MeshBasicNodeMaterial: webgpu.MeshBasicNodeMaterial,
           MapControls: controls.MapControls,
           WebGPULine2: webgpuLine2.Line2,
           LineGeometry: lineGeometry.LineGeometry,
           WebGPULineSegments2: webgpuLineSegments2.LineSegments2,
           LineSegmentsGeometry: lineSegmentsGeometry.LineSegmentsGeometry,
+          TSL: tsl,
         };
       },
     );
@@ -166,21 +182,37 @@ function buildTerrainLights(runtime: ThreeRuntime, packet: MapScenePacket) {
   const group = new runtime.THREE.Group();
   const maxSpan = Math.max(packet.metadata.imageWidth, packet.metadata.imageHeight);
 
-  const hemi = new runtime.THREE.HemisphereLight(0xe9f2ff, 0x8a7b5d, 1.3);
-  const keyLight = new runtime.THREE.DirectionalLight(0xfff4da, 1.75);
+  const hemi = new runtime.THREE.HemisphereLight(0xe7f0ff, 0x877356, 1.18);
+  const keyLight = new runtime.THREE.DirectionalLight(0xfff1d3, 1.85);
   keyLight.position.set(-maxSpan * 0.42, maxSpan * 0.55, maxSpan * 1.15);
 
-  const fillLight = new runtime.THREE.DirectionalLight(0xa1c8e5, 0.38);
+  const fillLight = new runtime.THREE.DirectionalLight(0x9fc4e0, 0.46);
   fillLight.position.set(maxSpan * 0.34, -maxSpan * 0.24, maxSpan * 0.72);
+
+  const rimLight = new runtime.THREE.DirectionalLight(0x5eb9f5, 0.24);
+  rimLight.position.set(maxSpan * 0.18, maxSpan * 0.52, -maxSpan * 0.35);
 
   group.add(hemi);
   group.add(keyLight);
   group.add(fillLight);
+  group.add(rimLight);
   return group;
 }
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * clamp01(t);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  if (edge0 === edge1) {
+    return value < edge0 ? 0 : 1;
+  }
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
 }
 
 function pixelOffset(width: number, x: number, y: number) {
@@ -238,6 +270,98 @@ function applyContrast(value: number, contrast: number) {
   return clamp01((value - 0.5) * contrast + 0.5);
 }
 
+function hashNoise(x: number, y: number, seed: number) {
+  let hash = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(seed, 2246822519);
+  hash = (hash ^ (hash >>> 13)) >>> 0;
+  hash = Math.imul(hash, 1274126177) >>> 0;
+  return hash / 0xffffffff;
+}
+
+function valueNoise2D(x: number, y: number, seed: number) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const tx = x - x0;
+  const ty = y - y0;
+
+  const v00 = hashNoise(x0, y0, seed);
+  const v10 = hashNoise(x0 + 1, y0, seed);
+  const v01 = hashNoise(x0, y0 + 1, seed);
+  const v11 = hashNoise(x0 + 1, y0 + 1, seed);
+
+  const sx = smoothstep(0, 1, tx);
+  const sy = smoothstep(0, 1, ty);
+  const nx0 = lerp(v00, v10, sx);
+  const nx1 = lerp(v01, v11, sx);
+  return lerp(nx0, nx1, sy);
+}
+
+function fbm2D(x: number, y: number, octaves: number, seed: number) {
+  let amplitude = 0.5;
+  let frequency = 1;
+  let sum = 0;
+  let normalization = 0;
+
+  for (let octave = 0; octave < octaves; octave += 1) {
+    sum += valueNoise2D(x * frequency, y * frequency, seed + octave * 31) * amplitude;
+    normalization += amplitude;
+    amplitude *= 0.52;
+    frequency *= 2.03;
+  }
+
+  return normalization > 0 ? sum / normalization : 0;
+}
+
+function buildDistanceField(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  targetLand: boolean,
+) {
+  const distance = new Float32Array(width * height);
+  const diagonal = Math.SQRT2;
+  const infinity = width + height;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const isLand = (mask[pixelOffset(width, x, y)] ?? 0) > 127;
+      distance[index] = isLand === targetLand ? 0 : infinity;
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      let value = distance[index];
+      if (x > 0) value = Math.min(value, distance[index - 1] + 1);
+      if (y > 0) value = Math.min(value, distance[index - width] + 1);
+      if (x > 0 && y > 0) value = Math.min(value, distance[index - width - 1] + diagonal);
+      if (x < width - 1 && y > 0) {
+        value = Math.min(value, distance[index - width + 1] + diagonal);
+      }
+      distance[index] = value;
+    }
+  }
+
+  for (let y = height - 1; y >= 0; y -= 1) {
+    for (let x = width - 1; x >= 0; x -= 1) {
+      const index = y * width + x;
+      let value = distance[index];
+      if (x < width - 1) value = Math.min(value, distance[index + 1] + 1);
+      if (y < height - 1) value = Math.min(value, distance[index + width] + 1);
+      if (x < width - 1 && y < height - 1) {
+        value = Math.min(value, distance[index + width + 1] + diagonal);
+      }
+      if (x > 0 && y < height - 1) {
+        value = Math.min(value, distance[index + width - 1] + diagonal);
+      }
+      distance[index] = value;
+    }
+  }
+
+  return distance;
+}
+
 function hashString(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -259,6 +383,10 @@ function configureTextureForRenderer(texture: import("three").Texture, renderer:
   texture.anisotropy = Math.max(1, getTextureMaxAnisotropy(renderer));
 }
 
+function isPowerOfTwo(value: number) {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
 function dataTexture(
   runtime: ThreeRuntime,
   data: Uint8Array,
@@ -267,12 +395,15 @@ function dataTexture(
   srgb = false,
 ) {
   const texture = new runtime.THREE.DataTexture(data, width, height, runtime.THREE.RGBAFormat);
+  const canMipMap = isPowerOfTwo(width) && isPowerOfTwo(height);
   texture.flipY = true;
   texture.wrapS = runtime.THREE.ClampToEdgeWrapping;
   texture.wrapT = runtime.THREE.ClampToEdgeWrapping;
-  texture.minFilter = runtime.THREE.LinearFilter;
+  texture.minFilter = canMipMap
+    ? runtime.THREE.LinearMipmapLinearFilter
+    : runtime.THREE.LinearFilter;
   texture.magFilter = runtime.THREE.LinearFilter;
-  texture.generateMipmaps = false;
+  texture.generateMipmaps = canMipMap;
   if (srgb) {
     texture.colorSpace = runtime.THREE.SRGBColorSpace;
   }
@@ -310,6 +441,8 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
   const sourceHeight = packet.textures.height;
   const sourceFlux = packet.textures.flux;
   const sourceMask = packet.textures.landMask;
+  const distanceToLand = buildDistanceField(sourceMask, width, height, true);
+  const distanceToWater = buildDistanceField(sourceMask, width, height, false);
   const terrainAlbedo = new Uint8Array(sourceAlbedo.length);
   const roughness = new Uint8Array(sourceAlbedo.length);
   const ao = new Uint8Array(sourceAlbedo.length);
@@ -319,16 +452,49 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
+      const pixelIndex = y * width + x;
       const offset = pixelOffset(width, x, y);
       const heightValue = (sourceHeight[offset] ?? 0) / 255;
       const fluxValue = (sourceFlux[offset] ?? 0) / 255;
       const isLand = (sourceMask[offset] ?? 0) > 127;
       const coast = coastalStrengthFromTexture(sourceMask, width, height, x, y);
+      const landDistance = distanceToWater[pixelIndex] ?? 0;
+      const waterDistance = distanceToLand[pixelIndex] ?? 0;
       const left = sampleTextureChannel(sourceHeight, width, height, x - 1, y);
       const right = sampleTextureChannel(sourceHeight, width, height, x + 1, y);
       const up = sampleTextureChannel(sourceHeight, width, height, x, y - 1);
       const down = sampleTextureChannel(sourceHeight, width, height, x, y + 1);
       const relief = clamp01((Math.abs(right - left) + Math.abs(down - up)) * 3.4);
+      const macroNoise = fbm2D(x / 42 + heightValue * 2.7, y / 42 + fluxValue * 2.1, 4, 17);
+      const detailNoise = fbm2D(x / 14 + 9.3, y / 14 + 6.1, 3, 37);
+      const ridgeNoise = 1 - Math.abs(fbm2D(x / 22 + relief * 7.5, y / 22 + heightValue * 5.4, 4, 61) * 2 - 1);
+      const fertileMix = clamp01(fluxValue * 0.84 + (1 - heightValue) * 0.12 + (macroNoise - 0.5) * 0.18);
+      const bathymetry = clamp01((1 - heightValue) * 0.26 + smoothstep(0, 54, waterDistance) * 0.82);
+      const beachMix = (1 - smoothstep(1.4, 10, landDistance)) * (1 - smoothstep(0.16, 0.34, heightValue));
+      const lowlandMix = smoothstep(0.06, 0.22, heightValue) * (1 - smoothstep(0.4, 0.6, heightValue));
+      const meadowMix =
+        smoothstep(0.12, 0.28, heightValue) *
+        (1 - smoothstep(0.5, 0.72, heightValue)) *
+        clamp01(fertileMix * 0.84 + macroNoise * 0.2);
+      const forestMix =
+        smoothstep(0.18, 0.42, heightValue) *
+        (1 - smoothstep(0.58, 0.8, heightValue)) *
+        clamp01(fertileMix * 1.05 + detailNoise * 0.16);
+      const rockMix = clamp01(
+        smoothstep(0.52, 0.84, heightValue) * 0.72 +
+          smoothstep(0.22, 0.58, relief) * 0.56 +
+          smoothstep(0.46, 0.74, ridgeNoise) * 0.18,
+      );
+      const cliffMix =
+        smoothstep(0.28, 0.64, relief) * smoothstep(0.22, 0.62, heightValue);
+      const snowMix = clamp01(
+        smoothstep(0.78, 0.92, heightValue) +
+          smoothstep(0.56, 0.82, heightValue) * smoothstep(0.52, 0.8, relief) * 0.2,
+      );
+      const shoreWaterMix = 1 - smoothstep(0.8, 11, waterDistance);
+      const shelfWaterMix =
+        smoothstep(4, 20, waterDistance) * (1 - smoothstep(20, 56, waterDistance));
+      const deepWaterMix = smoothstep(28, 74, waterDistance);
 
       let color: [number, number, number] = [
         sourceAlbedo[offset] ?? 0,
@@ -344,39 +510,75 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
         ];
         color = mixColor(
           color,
-          [86, 110, 53],
-          clamp01((0.58 - Math.abs(heightValue - 0.34)) * 0.58 + fluxValue * 0.14),
+          [201, 187, 146],
+          beachMix * 0.9,
         );
         color = mixColor(
           color,
-          [172, 152, 101],
-          clamp01((0.18 - heightValue) * 3.1) * (1 - fluxValue * 0.7),
+          [132, 165, 96],
+          meadowMix * (0.55 + macroNoise * 0.22),
         );
         color = mixColor(
           color,
-          [98, 96, 101],
-          clamp01(relief * 0.68 + Math.max(0, heightValue - 0.58) * 0.6),
+          [78, 103, 58],
+          forestMix * (0.68 + detailNoise * 0.16),
         );
         color = mixColor(
           color,
-          [242, 244, 247],
-          clamp01((heightValue - 0.78) * 3.5 + relief * 0.2),
+          [138, 126, 104],
+          rockMix * 0.52,
         );
         color = mixColor(
           color,
-          [201, 190, 145],
-          clamp01(coast * 0.18 + Math.max(0, 0.1 - heightValue) * 2.3),
+          [105, 98, 87],
+          cliffMix * 0.42,
+        );
+        color = mixColor(
+          color,
+          [239, 242, 245],
+          snowMix,
+        );
+        color = mixColor(
+          color,
+          [118, 146, 92],
+          clamp01(lowlandMix * 0.1 + Math.max(0, macroNoise - 0.56) * 0.12),
+        );
+        color = mixColor(
+          color,
+          [95, 87, 74],
+          clamp01(cliffMix * 0.08 + Math.max(0, 0.5 - macroNoise) * 0.08),
         );
       } else {
-        color = mixColor(color, [18, 44, 68], 0.34);
+        color = [
+          Math.round(lerp(190, 93, smoothstep(0.06, 0.24, bathymetry))),
+          Math.round(lerp(176, 141, smoothstep(0.06, 0.24, bathymetry))),
+          Math.round(lerp(138, 121, smoothstep(0.06, 0.24, bathymetry))),
+        ];
+        color = mixColor(color, [82, 132, 126], shelfWaterMix * 0.24 + detailNoise * 0.08);
+        color = mixColor(color, [57, 87, 105], smoothstep(0.26, 0.58, bathymetry) * 0.6);
+        color = mixColor(color, [29, 46, 71], smoothstep(0.56, 0.92, bathymetry) * 0.88);
+        color = mixColor(color, [212, 198, 160], shoreWaterMix * 0.48);
       }
 
       const roughnessValue = isLand
-        ? clamp01(0.96 - fluxValue * 0.22 - Math.max(0, heightValue - 0.76) * 0.16 + relief * 0.08)
-        : 1;
+        ? clamp01(
+            0.92 -
+              fertileMix * 0.14 +
+              beachMix * 0.05 -
+              snowMix * 0.22 +
+              rockMix * 0.08 +
+              (0.5 - detailNoise) * 0.06,
+          )
+        : clamp01(0.88 + bathymetry * 0.08 - shoreWaterMix * 0.08 + shelfWaterMix * 0.04);
       const aoValue = isLand
-        ? clamp01(0.92 - relief * 0.42 + fluxValue * 0.06 + Math.max(0, heightValue - 0.72) * 0.04)
-        : clamp01(0.96 - coast * 0.08);
+        ? clamp01(
+            0.94 -
+              relief * 0.34 -
+              cliffMix * 0.1 +
+              fertileMix * 0.06 +
+              Math.max(0, 0.5 - ridgeNoise) * 0.06,
+          )
+        : clamp01(0.9 - shelfWaterMix * 0.08 - shoreWaterMix * 0.06 + deepWaterMix * 0.04);
 
       terrainAlbedo[offset] = color[0];
       terrainAlbedo[offset + 1] = color[1];
@@ -395,12 +597,42 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
       ao[offset + 2] = aoEncoded;
       ao[offset + 3] = 255;
 
-      const waterDepth = clamp01(1 - heightValue);
-      const shallowMix = clamp01(1 - waterDepth * 1.28);
-      const waterBase = mixColor([9, 38, 69], [66, 158, 199], shallowMix * 0.8 + coast * 0.18);
-      const waterTint = mixColor(waterBase, [138, 218, 242], coast * 0.26);
-      const waterOpacity = isLand ? 0 : clamp01(0.84 - coast * 0.22 + shallowMix * 0.08);
-      const glowOpacity = isLand ? 0 : clamp01(coast * 0.78 + shallowMix * 0.12);
+      const waterTintNoise = fbm2D(x / 18 + 4.2, y / 18 + 11.6, 3, 89);
+      let waterTint = mixColor(
+        MALDIVES_SHORE_COLOR,
+        MALDIVES_LAGOON_COLOR,
+        smoothstep(0.04, 0.22, bathymetry),
+      );
+      waterTint = mixColor(
+        waterTint,
+        MALDIVES_TURQUOISE_COLOR,
+        smoothstep(0.18, 0.4, bathymetry),
+      );
+      waterTint = mixColor(waterTint, MALDIVES_REEF_BLUE, smoothstep(0.34, 0.64, bathymetry));
+      waterTint = mixColor(waterTint, MALDIVES_OUTER_ATOLL, smoothstep(0.58, 0.84, bathymetry));
+      waterTint = mixColor(waterTint, MALDIVES_DEEP_OCEAN, smoothstep(0.82, 1, bathymetry));
+      waterTint = mixColor(
+        waterTint,
+        [224, 246, 228],
+        shoreWaterMix * 0.14 + (1 - smoothstep(0.24, 0.58, bathymetry)) * 0.12,
+      );
+      waterTint = mixColor(
+        waterTint,
+        [144, 244, 235],
+        shoreWaterMix * clamp01(0.12 + waterTintNoise * 0.18),
+      );
+      waterTint = mixColor(
+        waterTint,
+        [6, 24, 68],
+        deepWaterMix * clamp01(0.16 + macroNoise * 0.16),
+      );
+
+      const waterOpacity = isLand
+        ? 0
+        : clamp01(0.52 + bathymetry * 0.34 + deepWaterMix * 0.08 - shoreWaterMix * 0.18);
+      const glowOpacity = isLand
+        ? 0
+        : clamp01(shoreWaterMix * 0.86 + shelfWaterMix * 0.12 + coast * 0.26);
 
       waterColor[offset] = waterTint[0];
       waterColor[offset + 1] = waterTint[1];
@@ -445,36 +677,117 @@ function buildOverlayPlane(
 }
 
 function buildCoastGlowMaterial(runtime: ThreeRuntime, alphaMap: import("three").Texture) {
-  return new runtime.THREE.MeshBasicMaterial({
-    alphaMap,
-    color: COAST_GLOW_COLOR,
-    depthTest: false,
-    depthWrite: false,
-    opacity: 0.5,
-    transparent: true,
-    blending: runtime.THREE.AdditiveBlending,
-    toneMapped: false,
-  });
+  const { MeshBasicNodeMaterial, TSL } = runtime;
+  const { texture, uv, float, vec4, color, sin, time, clamp } = TSL;
+
+  const uv0 = uv();
+  const alpha = texture(alphaMap, uv0).r;
+  const glowIntensity = float(0.4).add(sin(time.mul(float(0.46))).mul(float(0.07)));
+  const banding = sin(uv0.x.mul(float(82)).add(time.mul(float(0.8))))
+    .mul(sin(uv0.y.mul(float(63)).sub(time.mul(float(0.62)))))
+    .mul(float(0.08))
+    .add(float(0.96));
+  const glowAlpha = clamp(alpha.mul(glowIntensity).mul(banding), float(0), float(0.82));
+
+  const material = new MeshBasicNodeMaterial();
+  material.colorNode = vec4(color(COAST_GLOW_COLOR).rgb, glowAlpha);
+  material.transparent = true;
+  material.depthTest = false;
+  material.depthWrite = false;
+  material.blending = runtime.THREE.AdditiveBlending;
+  material.toneMapped = false;
+
+  return material;
 }
 
 function buildWaterMaterial(
   runtime: ThreeRuntime,
   colorMap: import("three").Texture,
   alphaMap: import("three").Texture,
+  depthMap: import("three").Texture,
+  coastMap: import("three").Texture,
 ) {
-  return new runtime.THREE.MeshStandardMaterial({
-    map: colorMap,
-    alphaMap,
-    color: 0xffffff,
-    emissive: new runtime.THREE.Color(0x13344f),
-    emissiveMap: colorMap,
-    emissiveIntensity: 0.22,
-    transparent: true,
-    opacity: 0.94,
-    depthWrite: false,
-    roughness: 0.22,
-    metalness: 0.02,
-  });
+  const { MeshStandardNodeMaterial, TSL } = runtime;
+  const { texture, uv, float, vec3, vec4, sin, cos, time, mix, clamp, smoothstep } = TSL;
+
+  const uv0 = uv();
+  const timeValue = time;
+  const animatedUV = uv0.add(
+    vec3(
+      sin(timeValue.mul(float(0.3)).add(uv0.y.mul(float(10)))).mul(float(0.002)),
+      cos(timeValue.mul(float(0.25)).add(uv0.x.mul(float(8)))).mul(float(0.0015)),
+      float(0),
+    ).xy,
+  );
+  const waterColor = texture(colorMap, animatedUV).rgb;
+  const waterAlpha = texture(alphaMap, uv0).r;
+  const waterHeight = texture(depthMap, uv0).r;
+  const coastMask = texture(coastMap, uv0).r;
+
+  const depthFactor = clamp(float(1).sub(waterHeight), float(0), float(1));
+  const nearshoreMask = smoothstep(float(0.14), float(0.9), coastMask);
+  const deepOceanMask = smoothstep(float(0.42), float(0.92), depthFactor);
+  const sandbarColor = vec3(0.77, 0.95, 0.9);
+  const lagoonColor = vec3(0.33, 0.84, 0.82);
+  const shelfColor = vec3(0.12, 0.53, 0.69);
+  const reefBlue = vec3(0.07, 0.32, 0.57);
+  const abyssColor = vec3(0.02, 0.09, 0.26);
+
+  let proceduralColor = mix(
+    sandbarColor,
+    lagoonColor,
+    smoothstep(float(0.02), float(0.16), depthFactor),
+  );
+  proceduralColor = mix(
+    proceduralColor,
+    shelfColor,
+    smoothstep(float(0.14), float(0.38), depthFactor),
+  );
+  proceduralColor = mix(
+    proceduralColor,
+    reefBlue,
+    smoothstep(float(0.34), float(0.72), depthFactor),
+  );
+  proceduralColor = mix(proceduralColor, abyssColor, deepOceanMask);
+  proceduralColor = mix(
+    proceduralColor,
+    vec3(0.7, 0.96, 0.93),
+    nearshoreMask.mul(float(0.24)),
+  );
+
+  const swell = sin(uv0.x.mul(float(44)).add(timeValue.mul(float(0.86))))
+    .mul(cos(uv0.y.mul(float(34)).sub(timeValue.mul(float(0.58)))));
+  const ripples = sin(uv0.x.mul(float(98)).sub(timeValue.mul(float(1.7))))
+    .mul(sin(uv0.y.mul(float(72)).add(timeValue.mul(float(1.18)))));
+  const waveHighlight = swell.mul(float(0.04)).add(float(1));
+  const caustics = nearshoreMask
+    .mul(ripples.mul(float(0.5)).add(float(0.5)))
+    .mul(float(0.18));
+
+  const baseWater = waterColor.mul(proceduralColor).mul(waveHighlight);
+  const waterWithHighlights = mix(
+    baseWater,
+    baseWater.add(vec3(0.24, 0.28, 0.24)),
+    caustics,
+  );
+  const surfaceAlpha = clamp(
+    waterAlpha.add(deepOceanMask.mul(float(0.04))).sub(nearshoreMask.mul(float(0.08))),
+    float(0.42),
+    float(0.95),
+  );
+
+  const material = new MeshStandardNodeMaterial();
+  material.colorNode = vec4(waterWithHighlights, surfaceAlpha);
+  material.roughnessNode = float(0.1)
+    .add(deepOceanMask.mul(float(0.08))) as unknown as typeof material.roughnessNode;
+  material.metalnessNode = float(0.03) as unknown as typeof material.metalnessNode;
+  material.emissiveNode = waterWithHighlights
+    .mul(nearshoreMask.mul(float(0.04)).add(float(0.02))) as unknown as typeof material.emissiveNode;
+  material.transparent = true;
+  material.depthWrite = false;
+  material.lights = true;
+
+  return material;
 }
 
 function configureOverlayMaterial(material: import("three").Material) {
@@ -485,6 +798,15 @@ function configureOverlayMaterial(material: import("three").Material) {
 function setRenderOrder(root: import("three").Object3D, renderOrder: number) {
   root.traverse((child) => {
     child.renderOrder = renderOrder;
+  });
+}
+
+function setLayeredRenderOrder(root: import("three").Object3D, baseRenderOrder: number) {
+  root.renderOrder = baseRenderOrder;
+  root.children.forEach((child, layerIndex) => {
+    child.traverse((descendant) => {
+      descendant.renderOrder = baseRenderOrder + layerIndex;
+    });
   });
 }
 
@@ -1322,60 +1644,7 @@ export class FantasyMapThreeRenderer {
       throw new Error("No terrain geometry available for WebGPU rendering");
     }
 
-    const surfaceTextures =
-      this.packet.textures.terrainAlbedo &&
-      this.packet.textures.roughness &&
-      this.packet.textures.ao &&
-      this.packet.textures.waterColor &&
-      this.packet.textures.waterAlpha &&
-      this.packet.textures.coastGlow
-        ? {
-            terrainAlbedo: dataTexture(
-              this.runtime,
-              this.packet.textures.terrainAlbedo,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-              true,
-            ),
-            height: dataTexture(
-              this.runtime,
-              this.packet.textures.height,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-            ),
-            roughness: dataTexture(
-              this.runtime,
-              this.packet.textures.roughness,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-            ),
-            ao: dataTexture(
-              this.runtime,
-              this.packet.textures.ao,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-            ),
-            waterColor: dataTexture(
-              this.runtime,
-              this.packet.textures.waterColor,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-              true,
-            ),
-            waterAlpha: dataTexture(
-              this.runtime,
-              this.packet.textures.waterAlpha,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-            ),
-            coastGlow: dataTexture(
-              this.runtime,
-              this.packet.textures.coastGlow,
-              this.packet.metadata.terrainWidth,
-              this.packet.metadata.terrainHeight,
-            ),
-          }
-        : buildSurfaceTextures(this.runtime, this.packet);
+    const surfaceTextures = buildSurfaceTextures(this.runtime, this.packet);
     configureTextureForRenderer(surfaceTextures.terrainAlbedo, this.renderer);
     configureTextureForRenderer(surfaceTextures.height, this.renderer);
     configureTextureForRenderer(surfaceTextures.roughness, this.renderer);
@@ -1403,7 +1672,13 @@ export class FantasyMapThreeRenderer {
       this.packet.metadata.imageWidth,
       this.packet.metadata.imageHeight,
       0.45,
-      buildWaterMaterial(this.runtime, surfaceTextures.waterColor, surfaceTextures.waterAlpha),
+      buildWaterMaterial(
+        this.runtime,
+        surfaceTextures.waterColor,
+        surfaceTextures.waterAlpha,
+        surfaceTextures.height,
+        surfaceTextures.coastGlow,
+      ),
     );
     waterMesh.renderOrder = 2;
     scene.add(waterMesh);
@@ -1513,13 +1788,13 @@ export class FantasyMapThreeRenderer {
     }
 
     const cityRoot = this.createInstancedCityGroup();
-    setRenderOrder(cityRoot, 50);
+    setLayeredRenderOrder(cityRoot, 50);
     layerRoots.city = cityRoot;
     scene.add(cityRoot);
     roots.push(cityRoot);
 
     const townRoot = this.createInstancedTownGroup();
-    setRenderOrder(townRoot, 50);
+    setLayeredRenderOrder(townRoot, 50);
     layerRoots.town = townRoot;
     scene.add(townRoot);
     roots.push(townRoot);
@@ -1540,7 +1815,7 @@ export class FantasyMapThreeRenderer {
     roughnessTexture: import("three").Texture,
     aoTexture: import("three").Texture,
   ) {
-    const { THREE } = this.runtime!;
+    const { THREE, MeshStandardNodeMaterial, TSL } = this.runtime!;
     const uvAttribute = terrainGeometry.getAttribute("uv");
     if (uvAttribute && !terrainGeometry.getAttribute("uv2")) {
       terrainGeometry.setAttribute(
@@ -1549,18 +1824,104 @@ export class FantasyMapThreeRenderer {
       );
     }
 
-    return new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      map: albedoTexture,
-      bumpMap: heightTexture,
-      bumpScale: this.packet ? this.packet.metadata.elevationScale * 0.085 : 5,
-      roughness: 0.96,
-      roughnessMap: roughnessTexture,
-      aoMap: aoTexture,
-      aoMapIntensity: 0.45,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    });
+    const {
+      texture,
+      uv,
+      normalLocal,
+      float,
+      vec3,
+      vec4,
+      smoothstep,
+      mix,
+      normalize,
+      abs,
+      dot,
+      clamp,
+      sin,
+      cos,
+    } = TSL;
+
+    const uv0 = uv();
+    const albedo = texture(albedoTexture, uv0);
+    const height = texture(heightTexture, uv0);
+    const roughnessMap = texture(roughnessTexture, uv0);
+    const ao = texture(aoTexture, uv0);
+    const surfaceNormal = normalize(normalLocal);
+    const upVector = vec3(0, 0, 1);
+    const slopeValue = float(1).sub(abs(dot(surfaceNormal, upVector)));
+    const beachColor = vec3(0.77, 0.72, 0.59);
+    const grassColor = vec3(0.42, 0.55, 0.26);
+    const forestColor = vec3(0.24, 0.36, 0.18);
+    const rockColor = vec3(0.48, 0.46, 0.41);
+    const snowColor = vec3(0.95, 0.96, 0.94);
+    const beachThreshold = float(0.12);
+    const grassThreshold = float(0.28);
+    const forestThreshold = float(0.48);
+    const rockThreshold = float(0.72);
+    const snowThreshold = float(0.85);
+    const grassWeight = smoothstep(beachThreshold, grassThreshold, height.r);
+    const forestWeight = smoothstep(grassThreshold, forestThreshold, height.r);
+    const rockWeight = smoothstep(forestThreshold, rockThreshold, height.r);
+    const snowWeight = smoothstep(snowThreshold, float(1), height.r);
+    const terrainColor1 = mix(beachColor, grassColor, grassWeight);
+    const terrainColor2 = mix(terrainColor1, forestColor, forestWeight.mul(float(0.8)));
+    const terrainColor3 = mix(terrainColor2, rockColor, rockWeight.mul(float(0.6)));
+    const terrainColor = mix(terrainColor3, snowColor, snowWeight);
+    const slopeRockMixWeight = smoothstep(float(0.35), float(0.65), slopeValue);
+    const slopeColor = mix(terrainColor, rockColor, slopeRockMixWeight.mul(float(0.7)));
+    const macroDetail = sin(uv0.x.mul(float(30)).add(height.r.mul(float(6))))
+      .mul(cos(uv0.y.mul(float(26)).sub(height.r.mul(float(5)))))
+      .mul(float(0.5))
+      .add(float(0.5));
+    const microDetail = sin(uv0.x.mul(float(94)).add(uv0.y.mul(float(37))))
+      .mul(cos(uv0.y.mul(float(102)).sub(uv0.x.mul(float(44)))))
+      .mul(float(0.5))
+      .add(float(0.5));
+    const valleyTint = vec3(0.34, 0.45, 0.27);
+    const ridgeTint = vec3(0.76, 0.72, 0.67);
+
+    let detailedAlbedo = mix(
+      albedo.rgb,
+      albedo.rgb.mul(vec3(0.94, 1.04, 0.97)),
+      macroDetail.mul(float(0.18)),
+    );
+    detailedAlbedo = mix(
+      detailedAlbedo,
+      valleyTint,
+      grassWeight.mul(float(0.12)).mul(float(1).sub(microDetail)),
+    );
+    detailedAlbedo = mix(
+      detailedAlbedo,
+      ridgeTint,
+      rockWeight.add(slopeRockMixWeight).mul(microDetail).mul(float(0.08)),
+    );
+    const finalColor = detailedAlbedo.mul(slopeColor);
+
+    const dynamicRoughness = clamp(
+      roughnessMap.r
+        .add(slopeValue.mul(float(0.12)))
+        .sub(height.r.mul(float(0.08)))
+        .add(microDetail.mul(float(0.05))),
+      float(0.3),
+      float(0.95),
+    );
+    const dynamicAO = clamp(
+      ao.r
+        .mul(float(1).sub(slopeValue.mul(float(0.18))))
+        .sub(float(1).sub(macroDetail).mul(float(0.08))),
+      float(0.32),
+      float(1),
+    );
+
+    const material = new MeshStandardNodeMaterial();
+    material.colorNode = vec4(finalColor, float(1)) as unknown as typeof material.colorNode;
+    material.roughnessNode = dynamicRoughness as unknown as typeof material.roughnessNode;
+    material.aoNode = dynamicAO as unknown as typeof material.aoNode;
+    material.metalnessNode = float(0) as unknown as typeof material.metalnessNode;
+    material.lights = true;
+    material.side = THREE.DoubleSide;
+
+    return material;
   }
 
   private createLineGroup(
@@ -1650,61 +2011,98 @@ export class FantasyMapThreeRenderer {
     return line;
   }
 
+  private createMarkerMaterial(fillColor: number) {
+    const { MeshBasicNodeMaterial, TSL } = this.runtime!;
+    const { color, float, vec4 } = TSL;
+
+    const material = new MeshBasicNodeMaterial();
+    material.colorNode = vec4(color(fillColor).rgb, float(1));
+    material.toneMapped = false;
+    configureOverlayMaterial(material);
+    return material;
+  }
+
+  private createInstancedMarkerLayer(
+    positions: Float32Array,
+    geometry: import("three").BufferGeometry,
+    material: import("three").Material,
+    zOffset: number,
+  ) {
+    const { THREE } = this.runtime!;
+    const count = positions.length / 3;
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+    const dummy = new THREE.Object3D();
+    for (let index = 0; index < positions.length; index += 3) {
+      dummy.position.set(positions[index], positions[index + 1], positions[index + 2] + zOffset);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index / 3, dummy.matrix);
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingBox();
+    mesh.computeBoundingSphere();
+    return mesh;
+  }
+
   private createInstancedCityGroup() {
     const group = new this.runtime!.THREE.Group();
+    const { THREE } = this.runtime!;
     const outerRadius = 10 * this.packet!.metadata.drawScale;
     const innerRadius = 5 * this.packet!.metadata.drawScale;
+    const outlineWidth = Math.max(1 * this.packet!.metadata.drawScale, outerRadius * 0.08);
+    const fillRadius = Math.max(innerRadius + outlineWidth * 0.35, outerRadius - outlineWidth);
     const positions = packetToThreeTriplets(this.packet!.markers.city);
 
-    const outer = new this.runtime!.THREE.InstancedMesh(
-      new this.runtime!.THREE.CircleGeometry(outerRadius, 32),
-      new this.runtime!.THREE.MeshBasicMaterial({ color: CITY_OUTER_COLOR }),
-      positions.length / 3,
+    const outline = this.createInstancedMarkerLayer(
+      positions,
+      new THREE.RingGeometry(fillRadius, outerRadius, 40),
+      this.createMarkerMaterial(CITY_OUTER_COLOR),
+      MARKER_BASE_Z_OFFSET,
     );
-    const inner = new this.runtime!.THREE.InstancedMesh(
-      new this.runtime!.THREE.CircleGeometry(innerRadius, 32),
-      new this.runtime!.THREE.MeshBasicMaterial({ color: CITY_INNER_COLOR }),
-      positions.length / 3,
+    const fill = this.createInstancedMarkerLayer(
+      positions,
+      new THREE.CircleGeometry(fillRadius, 40),
+      this.createMarkerMaterial(CITY_INNER_COLOR),
+      MARKER_BASE_Z_OFFSET + MARKER_LAYER_Z_STEP,
     );
-    configureOverlayMaterial(outer.material);
-    configureOverlayMaterial(inner.material);
+    const core = this.createInstancedMarkerLayer(
+      positions,
+      new THREE.CircleGeometry(innerRadius, 32),
+      this.createMarkerMaterial(CITY_OUTER_COLOR),
+      MARKER_BASE_Z_OFFSET + MARKER_LAYER_Z_STEP * 2,
+    );
 
-    const dummy = new this.runtime!.THREE.Object3D();
-    for (let index = 0; index < positions.length; index += 3) {
-      dummy.position.set(positions[index], positions[index + 1], positions[index + 2] + 0.8);
-      dummy.updateMatrix();
-      outer.setMatrixAt(index / 3, dummy.matrix);
-      dummy.position.set(positions[index], positions[index + 1], positions[index + 2] + 1.2);
-      dummy.updateMatrix();
-      inner.setMatrixAt(index / 3, dummy.matrix);
-    }
-    outer.instanceMatrix.needsUpdate = true;
-    inner.instanceMatrix.needsUpdate = true;
-
-    group.add(outer);
-    group.add(inner);
+    group.add(outline);
+    group.add(fill);
+    group.add(core);
     return group;
   }
 
   private createInstancedTownGroup() {
     const group = new this.runtime!.THREE.Group();
+    const { THREE } = this.runtime!;
     const radius = 5 * this.packet!.metadata.drawScale;
+    const outlineWidth = Math.max(1 * this.packet!.metadata.drawScale, radius * 0.12);
+    const fillRadius = Math.max(radius - outlineWidth, radius * 0.58);
     const positions = packetToThreeTriplets(this.packet!.markers.town);
-    const mesh = new this.runtime!.THREE.InstancedMesh(
-      new this.runtime!.THREE.CircleGeometry(radius, 28),
-      new this.runtime!.THREE.MeshBasicMaterial({ color: TOWN_COLOR }),
-      positions.length / 3,
-    );
-    configureOverlayMaterial(mesh.material);
 
-    const dummy = new this.runtime!.THREE.Object3D();
-    for (let index = 0; index < positions.length; index += 3) {
-      dummy.position.set(positions[index], positions[index + 1], positions[index + 2] + 0.8);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(index / 3, dummy.matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    group.add(mesh);
+    const outline = this.createInstancedMarkerLayer(
+      positions,
+      new THREE.RingGeometry(fillRadius, radius, 36),
+      this.createMarkerMaterial(CITY_OUTER_COLOR),
+      MARKER_BASE_Z_OFFSET,
+    );
+    const fill = this.createInstancedMarkerLayer(
+      positions,
+      new THREE.CircleGeometry(fillRadius, 36),
+      this.createMarkerMaterial(TOWN_COLOR),
+      MARKER_BASE_Z_OFFSET + MARKER_LAYER_Z_STEP,
+    );
+
+    group.add(outline);
+    group.add(fill);
     return group;
   }
 
@@ -1784,15 +2182,21 @@ export class FantasyMapThreeRenderer {
     texture.needsUpdate = true;
 
     const geometry = new this.runtime!.THREE.PlaneGeometry(logicalWidth, logicalHeight);
-    const material = new this.runtime!.THREE.MeshBasicMaterial({
-      alphaTest: 0.05,
-      depthTest: false,
-      depthWrite: false,
-      map: texture,
-      toneMapped: false,
-      transparent: true,
-    });
-    configureOverlayMaterial(material);
+
+    // TSL-based label material
+    const { MeshBasicNodeMaterial, TSL } = this.runtime!;
+    const { texture: tslTexture, uv } = TSL;
+
+    const uv0 = uv();
+    const labelTexture = tslTexture(texture, uv0);
+
+    const material = new MeshBasicNodeMaterial();
+    material.colorNode = labelTexture;
+    material.transparent = true;
+    material.depthTest = false;
+    material.depthWrite = false;
+    material.toneMapped = false;
+
     const mesh = new this.runtime!.THREE.Mesh(geometry, material);
     mesh.renderOrder = 40;
 

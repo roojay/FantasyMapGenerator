@@ -24,8 +24,8 @@ interface ControlPanelProps {
 }
 
 const presets = [
-  { label: "1080p", width: 1920, height: 1080 },
-  { label: "1440p", width: 2560, height: 1440 },
+  { label: "1080P", width: 1920, height: 1080 },
+  { label: "1440P", width: 2560, height: 1440 },
   { label: "4K", width: 3840, height: 2160 },
   { label: "8K", width: 7680, height: 4320 },
 ];
@@ -132,12 +132,15 @@ export function ControlPanel({
                         size="xs"
                         variant="light"
                         color="gray"
-                        className="cursor-pointer"
+                        className="min-w-0 cursor-pointer"
                         classNames={{
                           root: cn(
+                            "px-2!",
                             "hover:scale-105 active:scale-95",
                             "transition-transform duration-200",
                           ),
+                          inner: "min-w-0 px-0",
+                          label: "truncate",
                         }}
                         onClick={() => {
                           onConfigChange("width", preset.width);
