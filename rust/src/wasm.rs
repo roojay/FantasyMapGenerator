@@ -6,6 +6,7 @@ use crate::presentation::webgpu::{WebGpuPresentationConfig, WebGpuScenePlugin};
 use crate::presentation::RenderDataPlugin;
 use crate::standard_svg;
 use crate::{Extents2d, GlibcRand, MapDrawData, MapExportOptions, MapGenerator};
+use std::sync::OnceLock;
 use wasm_bindgen::prelude::*;
 
 const TERRAIN_ELEVATION_SCALE: f32 = 64.0;
@@ -13,10 +14,30 @@ const WATER_DEPTH_SCALE: f32 = 10.0;
 const OVERLAY_HEIGHT_OFFSET: f32 = 1.2;
 const LABEL_HEIGHT_OFFSET: f32 = 2.4;
 
+fn cached_city_name_buckets() -> &'static Vec<Vec<String>> {
+    static CITY_NAME_BUCKETS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
+
+    CITY_NAME_BUCKETS.get_or_init(|| {
+        let city_data = include_str!("citydata/countrycities.json");
+        let json: serde_json::Value = serde_json::from_str(city_data).expect("valid JSON");
+        json.as_object()
+            .expect("city data should be an object")
+            .values()
+            .filter_map(|value| value.as_array())
+            .map(|cities| {
+                cities
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .collect()
+    })
+}
+
 #[wasm_bindgen]
 pub struct WasmRenderPacket {
     metadata_json: String,
-    map_json: String,
+    svg_json: String,
     terrain_positions: Vec<f32>,
     terrain_normals: Vec<f32>,
     terrain_uvs: Vec<f32>,
@@ -24,7 +45,6 @@ pub struct WasmRenderPacket {
     height_texture: Vec<u8>,
     land_mask_texture: Vec<u8>,
     flux_texture: Vec<u8>,
-    albedo_texture: Vec<u8>,
     terrain_albedo_texture: Vec<u8>,
     roughness_texture: Vec<u8>,
     ao_texture: Vec<u8>,
@@ -56,8 +76,8 @@ impl WasmRenderPacket {
     }
 
     #[wasm_bindgen(getter)]
-    pub fn map_json(&self) -> String {
-        self.map_json.clone()
+    pub fn svg_json(&self) -> String {
+        self.svg_json.clone()
     }
 
     pub fn terrain_positions(&self) -> Vec<f32> {
@@ -86,10 +106,6 @@ impl WasmRenderPacket {
 
     pub fn flux_texture(&self) -> Vec<u8> {
         self.flux_texture.clone()
-    }
-
-    pub fn albedo_texture(&self) -> Vec<u8> {
-        self.albedo_texture.clone()
     }
 
     pub fn terrain_albedo_texture(&self) -> Vec<u8> {
@@ -416,21 +432,13 @@ impl WasmMapGenerator {
 
     /// 获取城市名称
     fn get_label_names(&mut self, num: usize) -> Vec<String> {
-        let city_data = include_str!("citydata/countrycities.json");
-        let json: serde_json::Value = serde_json::from_str(city_data).expect("valid JSON");
-        let obj = json.as_object().unwrap();
-        let countries: Vec<String> = obj.keys().cloned().collect();
+        let city_buckets = cached_city_name_buckets();
         let mut cities: Vec<String> = Vec::new();
 
         while cities.len() < num {
-            let rand_idx = self.generator.rng_mut().rand() as usize % countries.len();
-            let country = &countries[rand_idx];
-            if let Some(arr) = json[country].as_array() {
-                for v in arr {
-                    if let Some(s) = v.as_str() {
-                        cities.push(s.to_string());
-                    }
-                }
+            let rand_idx = self.generator.rng_mut().rand() as usize % city_buckets.len();
+            for city in &city_buckets[rand_idx] {
+                cities.push(city.clone());
             }
         }
 
@@ -484,8 +492,24 @@ impl WasmMapGenerator {
 }
 
 fn build_render_packet(draw_data: &MapDrawData) -> Result<WasmRenderPacket, JsValue> {
-    let map_json =
-        serde_json::to_string(draw_data).map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let svg_draw_data = MapDrawData {
+        image_width: draw_data.image_width,
+        image_height: draw_data.image_height,
+        draw_scale: draw_data.draw_scale,
+        contour: draw_data.contour.clone(),
+        river: draw_data.river.clone(),
+        slope: draw_data.slope.clone(),
+        city: draw_data.city.clone(),
+        town: draw_data.town.clone(),
+        territory: draw_data.territory.clone(),
+        label: draw_data.label.clone(),
+        heightmap: None,
+        flux_map: None,
+        land_mask: None,
+        land_polygons: None,
+    };
+    let svg_json = serde_json::to_string(&svg_draw_data)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
     let packet = WebGpuScenePlugin::build(draw_data, &WebGpuPresentationConfig::default())
         .map_err(|err| JsValue::from_str(&err))?;
     let metadata_json = serde_json::to_string(&packet.metadata)
@@ -493,7 +517,7 @@ fn build_render_packet(draw_data: &MapDrawData) -> Result<WasmRenderPacket, JsVa
 
     Ok(WasmRenderPacket {
         metadata_json,
-        map_json,
+        svg_json,
         terrain_positions: packet.terrain_positions,
         terrain_normals: packet.terrain_normals,
         terrain_uvs: packet.terrain_uvs,
@@ -501,7 +525,6 @@ fn build_render_packet(draw_data: &MapDrawData) -> Result<WasmRenderPacket, JsVa
         height_texture: packet.textures.height,
         land_mask_texture: packet.textures.land_mask,
         flux_texture: packet.textures.flux,
-        albedo_texture: packet.textures.albedo,
         terrain_albedo_texture: packet.textures.terrain_albedo,
         roughness_texture: packet.textures.roughness,
         ao_texture: packet.textures.ao,
@@ -1364,7 +1387,6 @@ mod tests {
             packet.terrain_positions.len() / 3
         );
         assert!(packet.terrain_indices.len() > 0);
-        assert!(packet.albedo_texture.len() > 0);
         assert_eq!(packet.height_texture.len(), packet.land_mask_texture.len());
         assert_eq!(packet.height_texture.len(), packet.flux_texture.len());
         assert_eq!(

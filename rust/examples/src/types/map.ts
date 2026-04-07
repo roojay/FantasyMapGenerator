@@ -73,7 +73,7 @@ export interface MapScenePacket {
     height: Uint8Array;
     landMask: Uint8Array;
     flux: Uint8Array;
-    albedo: Uint8Array;
+    albedo?: Uint8Array;
     terrainAlbedo?: Uint8Array;
     roughness?: Uint8Array;
     ao?: Uint8Array;
@@ -100,7 +100,9 @@ export interface MapScenePacket {
   };
   landPolygonPositions: Float32Array;
   landPolygonOffsets: Uint32Array;
-  mapJson: string;
+  mapJson?: string;
+  svgMapJson: string;
+  generatedFrom?: GeneratedMapSource;
 }
 
 export interface MapLayers {
@@ -157,6 +159,16 @@ export interface PresentationPluginMetadata {
 }
 
 export interface MapConfig {
+  seed: number;
+  width: number;
+  height: number;
+  resolution: number;
+  cities: number;
+  towns: number;
+  drawScale: number;
+}
+
+export interface GeneratedMapSource {
   seed: number;
   width: number;
   height: number;

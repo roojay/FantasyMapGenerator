@@ -1,4 +1,5 @@
 import type {
+  GeneratedMapSource,
   MapExportData,
   MapLabelRenderItem,
   MapSceneMetadata,
@@ -15,7 +16,7 @@ const textDecoder = new TextDecoder();
 
 interface WasmPacketWire {
   metadataJson: string;
-  mapJson: string;
+  svgJson: string;
   terrainPositions: Float32Array;
   terrainNormals: Float32Array;
   terrainUvs: Float32Array;
@@ -23,7 +24,6 @@ interface WasmPacketWire {
   heightTexture: Uint8Array;
   landMaskTexture: Uint8Array;
   fluxTexture: Uint8Array;
-  albedoTexture: Uint8Array;
   terrainAlbedoTexture: Uint8Array;
   roughnessTexture: Uint8Array;
   aoTexture: Uint8Array;
@@ -302,6 +302,18 @@ function buildLandPolygonBuffers(polygons?: number[][] | null) {
   return { positions, offsets };
 }
 
+function createSvgMapExportData(data: MapExportData): MapExportData {
+  const {
+    heightmap: _heightmap,
+    flux_map: _fluxMap,
+    land_mask: _landMask,
+    land_polygons: _landPolygons,
+    ...svgData
+  } = data;
+
+  return svgData;
+}
+
 function buildExportTerrain(data: MapExportData) {
   const rasterWidth = data.heightmap?.width ?? 2;
   const rasterHeight = data.heightmap?.height ?? 2;
@@ -443,7 +455,6 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
     packet.textures.height.buffer,
     packet.textures.landMask.buffer,
     packet.textures.flux.buffer,
-    packet.textures.albedo.buffer,
     packet.layers.slopeSegments.buffer,
     packet.layers.river.positions.buffer,
     packet.layers.river.offsets.buffer,
@@ -461,6 +472,7 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
     packet.landPolygonOffsets.buffer,
   ];
 
+  if (packet.textures.albedo) transferables.push(packet.textures.albedo.buffer);
   if (packet.textures.terrainAlbedo) transferables.push(packet.textures.terrainAlbedo.buffer);
   if (packet.textures.roughness) transferables.push(packet.textures.roughness.buffer);
   if (packet.textures.ao) transferables.push(packet.textures.ao.buffer);
@@ -471,8 +483,11 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
   return transferables;
 }
 
-export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
-  const mapData = JSON.parse(wire.mapJson) as MapExportData;
+export function scenePacketFromWasm(
+  wire: WasmPacketWire,
+  generatedFrom?: GeneratedMapSource,
+): MapScenePacket {
+  const svgData = JSON.parse(wire.svgJson) as MapExportData;
   const rawMetadata = JSON.parse(wire.metadataJson) as {
     image_width: number;
     image_height: number;
@@ -513,7 +528,6 @@ export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
       height: wire.heightTexture,
       landMask: wire.landMaskTexture,
       flux: wire.fluxTexture,
-      albedo: wire.albedoTexture,
       terrainAlbedo: wire.terrainAlbedoTexture,
       roughness: wire.roughnessTexture,
       ao: wire.aoTexture,
@@ -545,11 +559,12 @@ export function scenePacketFromWasm(wire: WasmPacketWire): MapScenePacket {
       offsets: wire.labelOffsets,
       anchors: wire.labelAnchors,
       sizes: wire.labelSizes,
-      items: decodeLabelItems(wire.labelBytes, wire.labelOffsets, wire.labelSizes, mapData),
+      items: decodeLabelItems(wire.labelBytes, wire.labelOffsets, wire.labelSizes, svgData),
     },
     landPolygonPositions: wire.landPolygonPositions,
     landPolygonOffsets: wire.landPolygonOffsets,
-    mapJson: wire.mapJson,
+    svgMapJson: wire.svgJson,
+    generatedFrom,
   };
 }
 
@@ -639,6 +654,7 @@ export function compileMapExportData(data: MapExportData, mapJson?: string): Map
     landPolygonPositions: landPolygonBuffers.positions,
     landPolygonOffsets: landPolygonBuffers.offsets,
     mapJson: mapJson ?? JSON.stringify(data),
+    svgMapJson: JSON.stringify(createSvgMapExportData(data)),
   };
 }
 

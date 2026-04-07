@@ -17,6 +17,18 @@ const DEFAULT_LAYERS: MapLayers = {
   label: true,
 };
 
+function layersEqual(a: MapLayers, b: MapLayers) {
+  return (
+    a.slope === b.slope &&
+    a.river === b.river &&
+    a.contour === b.contour &&
+    a.border === b.border &&
+    a.city === b.city &&
+    a.town === b.town &&
+    a.label === b.label
+  );
+}
+
 const PAPER_BACKGROUND = 0xf7f1e3;
 const WEBGPU_BACKGROUND = 0x0a2740;
 const WEBGPU_SURFACE = 0x11283a;
@@ -437,7 +449,36 @@ function disposeMaterial(
 function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
   const width = packet.metadata.terrainWidth;
   const height = packet.metadata.terrainHeight;
+  const precomputedTerrainAlbedo = packet.textures.terrainAlbedo;
+  const precomputedRoughness = packet.textures.roughness;
+  const precomputedAo = packet.textures.ao;
+  const precomputedWaterColor = packet.textures.waterColor;
+  const precomputedWaterAlpha = packet.textures.waterAlpha;
+  const precomputedCoastGlow = packet.textures.coastGlow;
+
+  if (
+    precomputedTerrainAlbedo &&
+    precomputedRoughness &&
+    precomputedAo &&
+    precomputedWaterColor &&
+    precomputedWaterAlpha &&
+    precomputedCoastGlow
+  ) {
+    return {
+      terrainAlbedo: dataTexture(runtime, precomputedTerrainAlbedo, width, height, true),
+      height: dataTexture(runtime, packet.textures.height, width, height),
+      roughness: dataTexture(runtime, precomputedRoughness, width, height),
+      ao: dataTexture(runtime, precomputedAo, width, height),
+      waterColor: dataTexture(runtime, precomputedWaterColor, width, height, true),
+      waterAlpha: dataTexture(runtime, precomputedWaterAlpha, width, height),
+      coastGlow: dataTexture(runtime, precomputedCoastGlow, width, height),
+    };
+  }
+
   const sourceAlbedo = packet.textures.albedo;
+  if (!sourceAlbedo) {
+    throw new Error("Fallback surface textures require albedo data");
+  }
   const sourceHeight = packet.textures.height;
   const sourceFlux = packet.textures.flux;
   const sourceMask = packet.textures.landMask;
@@ -946,6 +987,7 @@ export class FantasyMapThreeRenderer {
     }
   >();
   private lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }> = [];
+  private svgSourceHash: string | null = null;
 
   constructor(stage: HTMLDivElement) {
     this.stage = stage;
@@ -1041,23 +1083,31 @@ export class FantasyMapThreeRenderer {
   }
 
   private makeSvgCacheKey() {
-    if (!this.packet?.mapJson) {
+    if (!this.packet?.svgMapJson) {
       return null;
     }
 
+    if (this.svgSourceHash === null) {
+      this.svgSourceHash = `${this.packet.svgMapJson.length}:${hashString(this.packet.svgMapJson)}`;
+    }
+
     return JSON.stringify({
-      mapJsonHash: `${this.packet.mapJson.length}:${hashString(this.packet.mapJson)}`,
+      mapJsonHash: this.svgSourceHash,
       layers: this.layers,
     });
   }
 
-  private invalidateRenderCaches() {
+  private invalidateSvgCache() {
     this.svgMarkup = null;
     this.svgMarkupCacheKey = null;
     this.svgMarkupPromise = null;
     this.svgMarkupPromiseKey = null;
     this.svgRenderDirty = true;
     this.modeDirty.svg = true;
+  }
+
+  private invalidateRenderCaches() {
+    this.invalidateSvgCache();
     this.modeDirty.webgpu = true;
   }
 
@@ -1155,6 +1205,7 @@ export class FantasyMapThreeRenderer {
             this.modeDirty[mode] = false;
           }
 
+          this.applyLayerVisibility();
           this.applyViewState(viewState);
           this.resize();
           this.setSnapshotVisibility(cachedSnapshot, true);
@@ -1213,14 +1264,33 @@ export class FantasyMapThreeRenderer {
   }
 
   loadMapData(packet: MapScenePacket) {
+    if (this.packet === packet) {
+      return;
+    }
+
     this.packet = packet;
+    this.svgSourceHash = null;
     this.invalidateRenderCaches();
     this.disposeCachedSnapshots();
   }
 
   setLayers(layers: MapLayers) {
+    if (layersEqual(this.layers, layers)) {
+      return;
+    }
+
     this.layers = { ...layers };
-    this.invalidateRenderCaches();
+    this.invalidateSvgCache();
+
+    if (this.modeSnapshots.webgpu) {
+      this.applyLayerVisibility(this.modeSnapshots.webgpu.layerRoots);
+    }
+
+    if (this.renderMode === "webgpu") {
+      this.modeDirty.webgpu = false;
+      this.applyLayerVisibility();
+      this.draw();
+    }
   }
 
   async render() {
@@ -1232,9 +1302,15 @@ export class FantasyMapThreeRenderer {
       return;
     }
 
-    await this.rebuildScene();
-    this.modeDirty[this.renderMode] = false;
-    this.resize();
+    if (this.modeDirty[this.renderMode]) {
+      await this.rebuildScene();
+      this.modeDirty[this.renderMode] = false;
+      this.resize();
+      return;
+    }
+
+    this.applyLayerVisibility();
+    this.draw();
   }
 
   resize() {
@@ -1321,7 +1397,7 @@ export class FantasyMapThreeRenderer {
   }
 
   primeSvgMarkup() {
-    if (!this.packet?.mapJson) {
+    if (!this.packet?.svgMapJson) {
       return;
     }
 
@@ -1599,7 +1675,7 @@ export class FantasyMapThreeRenderer {
 
     const useTextureFallback = this.packet.landPolygonOffsets.length <= 1;
 
-    if (useTextureFallback && this.packet.mapJson) {
+    if (useTextureFallback && this.packet.svgMapJson) {
       const texture = await svgMarkupToTexture(
         this.runtime,
         await this.buildMapSvgMarkup(),
@@ -2207,8 +2283,10 @@ export class FantasyMapThreeRenderer {
     };
   }
 
-  private applyLayerVisibility() {
-    for (const [key, root] of Object.entries(this.layerRoots) as Array<
+  private applyLayerVisibility(
+    roots: Partial<Record<keyof MapLayers, import("three").Object3D>> = this.layerRoots,
+  ) {
+    for (const [key, root] of Object.entries(roots) as Array<
       [keyof MapLayers, import("three").Object3D | undefined]
     >) {
       if (!root) continue;
@@ -2255,7 +2333,7 @@ export class FantasyMapThreeRenderer {
   }
 
   private async buildMapSvgMarkup() {
-    if (!this.packet?.mapJson) {
+    if (!this.packet?.svgMapJson) {
       throw new Error("SVG mode requires exported map JSON data");
     }
 
@@ -2297,7 +2375,7 @@ export class FantasyMapThreeRenderer {
       const request: SvgBuildWorkerRequest = {
         type: "build-svg",
         requestId,
-        mapJson: this.packet!.mapJson,
+        mapJson: this.packet!.svgMapJson,
         layers: { ...this.layers },
       };
       worker.postMessage(request);

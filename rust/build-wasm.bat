@@ -14,6 +14,7 @@ wasm-pack build --target web --out-dir examples/pkg --features wasm
 echo.
 echo Build complete!
 echo.
-echo To run:
+echo Next steps:
 echo   cd examples
-echo   npx serve
+echo   pnpm dev
+echo   pnpm build

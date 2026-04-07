@@ -77,7 +77,12 @@ function AppContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rendererRef = useRef<MapRendererHandle>(null);
   const { toggleColorScheme } = useMantineColorScheme();
-  const { generate: generateMap } = useMapGenerator();
+  const {
+    generate: generateMap,
+    exportJson: exportMapJson,
+    isReady: generatorReady,
+    readyError,
+  } = useMapGenerator();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobilePanelOpened, { open: openMobilePanel, close: closeMobilePanel }] =
@@ -115,9 +120,20 @@ function AppContent() {
   }, [i18n, language]);
 
   useEffect(() => {
-    // Worker 会自动初始化 WASM
-    setStatus({ tone: "success", text: t("status.wasmReady") });
-  }, []);
+    if (readyError) {
+      setError(t("errors.wasmInit", { message: readyError }));
+      setStatus({ tone: "error", text: t("status.ready") });
+      return;
+    }
+
+    if (generatorReady) {
+      setError(null);
+      setStatus({ tone: "success", text: t("status.wasmReady") });
+      return;
+    }
+
+    setStatus({ tone: "neutral", text: t("status.booting") });
+  }, [generatorReady, readyError, t]);
 
   useEffect(() => {
     const storedValue =
@@ -268,8 +284,30 @@ function AppContent() {
         await waitForNextPaint();
 
         if (format === "json") {
+          const json =
+            mapData.mapJson ??
+            (mapData.generatedFrom ? await exportMapJson(mapData.generatedFrom) : null);
+          if (!json) {
+            throw new Error("JSON export is unavailable for this map");
+          }
+
+          if (!mapData.mapJson) {
+            startTransition(() => {
+              setMapData((current) => {
+                if (current !== mapData) {
+                  return current;
+                }
+
+                return {
+                  ...current,
+                  mapJson: json,
+                };
+              });
+            });
+          }
+
           downloadBlob(
-            new Blob([mapData.mapJson], { type: "application/json" }),
+            new Blob([json], { type: "application/json" }),
             `fantasy_map_${exportSlug}_${exportTimestamp}.json`,
           );
           setExporting(false);
@@ -308,7 +346,7 @@ function AppContent() {
         setStatus({ tone: "error", text: t("status.ready") });
       }
     },
-    [mapData, presentation, t],
+    [exportMapJson, mapData, presentation, t],
   );
 
   const toggleTheme = useCallback(() => {
@@ -316,11 +354,12 @@ function AppContent() {
   }, [toggleColorScheme]);
 
   const blockingBusy = loading || rendererSwitching || exporting;
+  const controlsBusy = blockingBusy || !generatorReady;
 
   const sidebar = presentation ? (
     <ControlPanel
       config={config}
-      isBusy={blockingBusy}
+      isBusy={controlsBusy}
       onConfigChange={updateConfig}
       onGenerate={handleGenerate}
     />

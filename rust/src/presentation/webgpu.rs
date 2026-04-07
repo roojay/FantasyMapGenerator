@@ -30,7 +30,6 @@ pub struct WebGpuTextureSet {
     pub height: Vec<u8>,
     pub land_mask: Vec<u8>,
     pub flux: Vec<u8>,
-    pub albedo: Vec<u8>,
     pub terrain_albedo: Vec<u8>,
     pub roughness: Vec<u8>,
     pub ao: Vec<u8>,
@@ -141,15 +140,7 @@ pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePa
     let height_texture = encode_scalar_texture(&top_down_height, terrain_width, terrain_height);
     let land_mask_texture = encode_mask_texture(&top_down_land, terrain_width, terrain_height);
     let flux_texture = encode_scalar_texture(&top_down_flux, terrain_width, terrain_height);
-    let albedo_texture = encode_albedo_texture(
-        &top_down_height,
-        &top_down_land,
-        &top_down_flux,
-        terrain_width,
-        terrain_height,
-    );
     let surface_textures = build_surface_texture_pack(
-        &albedo_texture,
         &height_texture,
         &flux_texture,
         &land_mask_texture,
@@ -238,7 +229,6 @@ pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePa
             height: height_texture,
             land_mask: land_mask_texture,
             flux: flux_texture,
-            albedo: albedo_texture,
             terrain_albedo: surface_textures.terrain_albedo,
             roughness: surface_textures.roughness,
             ao: surface_textures.ao,
@@ -419,32 +409,6 @@ fn encode_mask_texture(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     texture
 }
 
-fn encode_albedo_texture(
-    height: &[f32],
-    land: &[u8],
-    flux: &[f32],
-    width: u32,
-    height_px: u32,
-) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height_px * 4) as usize);
-    for y in 0..height_px as usize {
-        for x in 0..width as usize {
-            let idx = y * width as usize + x;
-            let land_value = land[idx] > 0;
-            let height_value = height[idx].clamp(0.0, 1.0);
-            let flux_value = flux.get(idx).copied().unwrap_or(0.0).clamp(0.0, 1.0);
-            let coast = coastal_strength(land, width, height_px, x as i32, y as i32);
-            let [r, g, b] = if land_value {
-                colorize_land(height_value, flux_value, coast)
-            } else {
-                colorize_water(height_value, coast)
-            };
-            texture.extend_from_slice(&[r, g, b, 255]);
-        }
-    }
-    texture
-}
-
 struct SurfaceTexturePack {
     terrain_albedo: Vec<u8>,
     roughness: Vec<u8>,
@@ -455,7 +419,6 @@ struct SurfaceTexturePack {
 }
 
 fn build_surface_texture_pack(
-    albedo_texture: &[u8],
     height_texture: &[u8],
     flux_texture: &[u8],
     land_mask_texture: &[u8],
@@ -548,11 +511,11 @@ fn build_surface_texture_pack(
                     * aspect_light,
             );
 
-            let mut color = [
-                albedo_texture[idx],
-                albedo_texture[idx + 1],
-                albedo_texture[idx + 2],
-            ];
+            let mut color = if is_land {
+                colorize_land(height_value, flux_value, coast)
+            } else {
+                colorize_water(height_value, coast)
+            };
 
             if is_land {
                 color = [

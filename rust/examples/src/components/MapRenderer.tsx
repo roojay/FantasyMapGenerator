@@ -180,7 +180,6 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
 
         if (currentState.mapData) {
           renderer.loadMapData(currentState.mapData);
-          renderer.primeSvgMarkup();
           await renderer.render();
           if (!active || requestId !== renderRequestIdRef.current) return;
           if (lastAutoFittedPacketRef.current !== currentState.mapData) {
@@ -219,23 +218,22 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
 
   useEffect(() => {
     const renderer = rendererRef.current;
-    if (!renderer?.currentMode || !mapData) return;
+    const currentMapData = renderStateRef.current.mapData;
+    if (!renderer?.currentMode || !currentMapData) return;
 
     let active = true;
     const requestId = ++renderRequestIdRef.current;
 
     const renderMap = async () => {
       try {
-        renderer.setLayers(presentation.layers);
-        renderer.loadMapData(mapData);
-        renderer.primeSvgMarkup();
+        renderer.loadMapData(currentMapData);
         await renderer.render();
         if (!active || requestId !== renderRequestIdRef.current || !renderer.currentMode) return;
 
-        if (lastAutoFittedPacketRef.current !== mapData) {
+        if (lastAutoFittedPacketRef.current !== currentMapData) {
           userAdjustedViewRef.current = false;
           renderer.fitToScreen();
-          lastAutoFittedPacketRef.current = mapData;
+          lastAutoFittedPacketRef.current = currentMapData;
         }
         callbacksRef.current.onRenderComplete(renderer.currentMode);
       } catch (error) {
@@ -252,7 +250,36 @@ export const MapRenderer = forwardRef<MapRendererHandle, MapRendererProps>(funct
     return () => {
       active = false;
     };
-  }, [mapData, presentation.layers]);
+  }, [mapData]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer?.currentMode || !mapData) return;
+
+    let active = true;
+    const requestId = ++renderRequestIdRef.current;
+
+    const updateLayers = async () => {
+      try {
+        renderer.setLayers(presentation.layers);
+        await renderer.render();
+        if (!active || requestId !== renderRequestIdRef.current || !renderer.currentMode) return;
+        callbacksRef.current.onRenderComplete(renderer.currentMode);
+      } catch (error) {
+        if (active && requestId === renderRequestIdRef.current) {
+          callbacksRef.current.onRenderError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    };
+
+    void updateLayers();
+
+    return () => {
+      active = false;
+    };
+  }, [presentation.layers]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;

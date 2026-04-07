@@ -1,21 +1,13 @@
-# Fantasy Map Generator Rust 版本
+# Fantasy Map Generator Rust 版
 
-这个目录包含项目的 Rust 实现，当前同时提供 4 条使用路径：
+这个目录是项目的 Rust 实现，当前同时提供 4 条实际可用路径：
 
-- `map_generation` CLI：生成地图 JSON，启用 `render` feature 时可额外输出 PNG
-- Rust 库：直接调用 `MapGenerator` 和导出数据结构
-- `wasm` 绑定：供浏览器侧生成地图、导出 SVG、导出 WebGPU scene packet
-- `examples/` 前端示例：`Vite + React + TypeScript + Three.js + Mantine`
+- CLI：生成地图 JSON，启用 `render` feature 时可额外输出 PNG
+- Rust 库：直接调用 `MapGenerator`、`MapDrawData` 和相关导出结构
+- WASM 绑定：供浏览器端生成地图、构建标准 SVG、导出 WebGPU scene packet
+- `examples/`：基于 Vite/React/Three.js 的网页演示
 
-## 当前实现概览
-
-- 核心地图生成流程已完成：不规则网格、地形、侵蚀、河流、城市、领土、标签
-- 默认导出格式为 JSON
-- `render` feature 提供基于 `wgpu` 的 PNG 渲染
-- `wasm` feature 提供 `wasm-bindgen` 接口和前端示例依赖的导出能力
-- `presentation` 模块提供面向不同展示层的插件式数据输出
-
-## 目录结构
+## 当前目录结构
 
 ```text
 rust/
@@ -24,28 +16,52 @@ rust/
 ├── build-wasm.sh
 ├── build-wasm.bat
 ├── src/
-│   ├── lib.rs
-│   ├── main.rs
 │   ├── cli.rs
 │   ├── config.rs
+│   ├── lib.rs
+│   ├── main.rs
 │   ├── map_generator.rs
-│   ├── wasm.rs
 │   ├── standard_svg.rs
-│   ├── satellite_svg.rs
+│   ├── wasm.rs
 │   ├── algorithms/
 │   ├── data_structures/
 │   ├── presentation/
 │   ├── render/
-│   ├── citydata/
-│   └── fontdata/
+│   └── utils/
 ├── tests/
-│   ├── snapshot_test.rs
-│   └── baselines/
 └── examples/
-    ├── README.md
-    ├── src/
-    └── package.json
 ```
+
+## 已实现能力
+
+- 不规则网格生成：Poisson disk + Delaunay + Voronoi
+- 地形生成：hill / cone / slope 原语
+- 多轮侵蚀、河流、等高线、坡线
+- 城市、城镇、领土、标签布局
+- 标准 SVG 导出
+- WASM `generate_render_packet(...)` 导出前端场景包
+- 可选 PNG 渲染（`render` feature）
+
+当前**没有**这些能力：
+
+- `satellite_svg`
+- 卫星风格 SVG CLI 选项
+- 独立 npm 包发布流程
+
+## 当前推荐工作流
+
+按实际用途，建议这样使用：
+
+- 批处理出图或归档：CLI
+- 程序内复用生成结果：Rust 库
+- 浏览器实时生成与交互：WASM + `examples/`
+- 标准矢量导出：`build_map_svg(...)`
+
+如果目标是稳定产出素材，推荐顺序通常是：
+
+1. 先生成 JSON
+2. 需要位图时启用 `render`
+3. 需要矢量图时启用 `svg`
 
 ## 快速开始
 
@@ -56,7 +72,7 @@ cd rust
 cargo run --release -- --seed 12345 --output examples/my_map
 ```
 
-输出文件：
+输出：
 
 - `examples/my_map.json`
 
@@ -67,69 +83,37 @@ cd rust
 cargo run --release --features render -- --seed 12345 --output examples/my_map
 ```
 
-输出文件：
+输出：
 
 - `examples/my_map.json`
 - `examples/my_map.png`
 
-如果只想在启用 `render` 的情况下跳过 PNG：
+如果只想在启用 `render` 后跳过 PNG：
 
 ```bash
 cargo run --release --features render -- --seed 12345 --no-render --output examples/my_map
 ```
 
-### 3. 生成 JSON + 标准风格 SVG
-
-需要启用 `svg` feature：
+### 3. 生成 JSON + 标准 SVG
 
 ```bash
 cd rust
 cargo run --release --features svg -- --seed 12345 --svg --output examples/my_map
 ```
 
-输出文件：
+输出：
 
 - `examples/my_map.json`
 - `examples/my_map-standard.svg`
 
-### 4. 生成 JSON + 卫星风格 SVG
-
-需要启用 `svg` feature：
-
-```bash
-cd rust
-cargo run --release --features svg -- --seed 12345 --satellite-svg --output examples/my_map
-```
-
-输出文件：
-
-- `examples/my_map.json`
-- `examples/my_map-satellite.svg`
-
-### 5. 生成所有格式
-
-同时启用 `render` 和 `svg` feature：
-
-```bash
-cd rust
-cargo run --release --features "render svg" -- --seed 12345 --svg --satellite-svg --output examples/my_map
-```
-
-输出文件：
-
-- `examples/my_map.json`
-- `examples/my_map.png`
-- `examples/my_map-standard.svg`
-- `examples/my_map-satellite.svg`
-
-### 6. 查看 CLI 参数
+### 4. 查看 CLI 参数
 
 ```bash
 cd rust
 cargo run -- --help
 ```
 
-当前常用参数：
+当前实际支持的常用参数：
 
 - `--seed` / `--timeseed`
 - `--output`
@@ -148,174 +132,89 @@ cargo run -- --help
 - `--no-towns`
 - `--no-labels`
 - `--no-arealabels`
-- `--no-render`，仅在 `render` feature 下可用
-- `--svg`，仅在 `svg` feature 下可用
-- `--satellite-svg`，仅在 `svg` feature 下可用
+- `--no-render`，仅在 `render` feature 下编译可用
+- `--svg`，仅在 `svg` feature 下编译可用
 
-补充说明：
+当前会被解析但没有额外行为的参数：
 
-- 默认输出路径是 `examples/output`
-- `--size` 支持 `1920:1080` 和 `1920x1080`
-- `--drawing-supported`、`-v/--verbose` 目前会被解析，但还没有额外行为
+- `--drawing-supported`
+- `-v` / `--verbose`
+
+## 地图生成流程
+
+当前 CLI、库和 WASM 共用同一套核心逻辑，顺序如下：
+
+1. Poisson 采样生成点集
+2. Delaunay 三角剖分并构建 Voronoi 网格
+3. 随机叠加 hill / cone / slope 生成初始地形
+4. 归一化、圆滑或松弛
+5. 多轮侵蚀，期间计算流向和流量
+6. 生成河流、等高线、坡线
+7. 放置城市、城镇并计算领土边界
+8. 生成并优化标签布局
+9. 导出 `MapDrawData` 或 Web 场景包
+
+当前实现已经包含这些与性能相关的落地优化：
+
+- `calculate_flux_map()` 使用线性传播，而不是重复沿流向路径累加
+- hill / cone 原语使用局部空间查询，而不是每个原语全图扫描
+- Web 首图默认不保留完整 JSON，JSON 导出改为按需生成
+
+## 算法说明
+
+当前实现里最重要的算法和职责如下：
+
+- Poisson 圆盘采样：生成分布均匀的基础点集，避免规则网格痕迹
+- Delaunay 三角剖分：建立点之间的稳定邻接关系
+- Voronoi 图：作为地图的不规则网格和面级分析基础
+- 地形原语：通过 hill / cone / slope 组合出初始地貌
+- 洼地填充：保证水流路径可达，不会被局部低洼困住
+- 流向 / 流量计算：驱动河流与侵蚀
+- 侵蚀：逐轮平滑地形、刻蚀河谷
+- 城市评分与移动成本：决定城市位置和领土划分
+- 模拟退火：在候选位置中优化标签布局
+
+与当前实现直接相关的几处细节：
+
+- `calculate_flux_map()` 已不是旧版“每个点一路累加到边界”，而是按流向 DAG 做线性传播
+- `fill_depressions()` 当前采用 priority-flood 风格传播，而不是全图反复扫描
+- hill / cone 使用 `SpatialPointGrid` 做局部顶点筛选，减少无意义全量遍历
+- 前端首图不再强制保留完整 JSON，JSON 导出改为按需回源
 
 ## Cargo features
 
-`Cargo.toml` 当前定义了三个可选 feature：
+`Cargo.toml` 当前定义了 3 个可选 feature：
 
 ### `render`
 
-用于本地 PNG 渲染，依赖：
+启用本地 PNG 渲染。
+
+依赖：
 
 - `wgpu`
 - `pollster`
 - `image`
 - `bytemuck`
 
-典型用法：
-
-```bash
-cargo run --release --features render -- --seed 12345 --output examples/output
-cargo test --features render
-```
-
 ### `svg`
 
-用于导出 SVG（标准风格和卫星风格），依赖：
+启用标准 SVG 导出。
 
-- `image`
-- `base64`
+当前只包含：
 
-典型用法：
-
-```bash
-cargo run --release --features svg -- --seed 12345 --svg --output examples/output
-cargo run --release --features svg -- --seed 12345 --satellite-svg --output examples/output
-```
+- `standard_svg`
 
 ### `wasm`
 
-用于浏览器集成，依赖：
+启用浏览器集成。
+
+依赖：
 
 - `wasm-bindgen`
 - `js-sys`
 - `console_error_panic_hook`
 - `wee_alloc`
-- `image`
-- `base64`
-
-典型用法：
-
-```bash
-cargo check --features wasm
-./build-wasm.sh
-```
-
-Windows 下可使用：
-
-```bash
-build-wasm.bat
-```
-
-## 地图生成流程
-
-当前 CLI、Rust 库和 `WasmMapGenerator` 共享同一套核心生成逻辑，整体流程如下：
-
-1. 使用 Poisson 圆盘采样生成点集
-2. 对点集做 Delaunay 三角剖分，并构造 Voronoi 网格
-3. 叠加山丘、圆锥、斜坡等地形原语生成初始高度图
-4. 执行归一化、圆滑或松弛，随后做多轮侵蚀
-5. 重新设定海平面，计算流向、流量、河流、等高线和坡度阴影
-6. 按评分放置城市和城镇，并根据移动成本划分领土
-7. 为城市名、地区名生成候选位置，使用模拟退火优化标签布局
-8. 导出 `MapDrawData`，再按需要交给 PNG 渲染器、SVG 构建器或 WebGPU scene packet
-
-CLI 中默认的地形初始化与侵蚀策略也与当前实现一致：
-
-- 地形原语随机组合包含 hill、cone、slope
-- 侵蚀通过多轮 `erode(amount / iterations)` 完成
-- 侵蚀结束后调用 `set_sea_level_to_median()`，保持陆海比例稳定
-
-## 算法说明
-
-当前实现涉及的主要算法与职责如下：
-
-- Poisson 圆盘采样：生成分布均匀的基础点集
-- Delaunay 三角剖分：建立邻接关系和三角网格
-- Voronoi 图：作为地图不规则网格与地形采样基础
-- Planchon-Darboux 洼地填充：保证水流路径可达
-- 流向与流量计算：驱动河流与侵蚀
-- Dijkstra 移动成本：用于城市势力范围和领土边界
-- 模拟退火：用于标签候选位置优化
-
-和原始 C++ 版本保持一致的部分仍然保留，包括：
-
-- `glibc rand` 风格随机数生成器
-- 一些看起来“多余”的随机数调用顺序
-- 同种子下尽量保持一致的地图生成行为
-
-## 渲染流程
-
-启用 `render` feature 后，`MapRenderer::render()` 当前按下面的顺序执行：
-
-1. 清空背景
-2. 绘制坡度阴影
-3. 绘制领土边界底色和边界线
-4. 绘制河流
-5. 绘制等高线
-6. 绘制城市标记
-7. 绘制城镇标记
-8. 处理文字标签
-
-需要注意：
-
-- 第 8 步的文字渲染接口已经接好，但 `TextRenderer` 当前仍是占位实现
-- 城市和城镇圆形标记半径会受 `draw_scale` 影响
-- `RenderStyle` 中保留了线宽配置字段，但当前 `wgpu` 线条路径仍主要依赖基础线段绘制能力
-
-## 坐标系统
-
-当前文档和实现使用的坐标约定如下：
-
-- `MapDrawData` 中的几何坐标是归一化坐标，范围通常为 `[0, 1]`
-- 线段、路径和点在进入 WebGPU 前会执行一次 Y 轴翻转，即 `y = 1.0 - y`
-- WGSL 顶点着色器再把 `[0, 1]` 坐标映射到 NDC `[-1, 1]`
-
-这意味着：
-
-- 导出的 JSON 更适合跨渲染后端复用
-- WebGPU 渲染器内部负责坐标系适配
-- `presentation` / WASM 层可以在不改核心生成逻辑的前提下复用同一份地图数据
-
-## JSON 导出格式
-
-CLI 和库最终导出的核心结构是 `MapDrawData`，主要字段包括：
-
-```json
-{
-  "image_width": 1920,
-  "image_height": 1080,
-  "draw_scale": 1.0,
-  "contour": [],
-  "river": [],
-  "slope": [],
-  "city": [],
-  "town": [],
-  "territory": [],
-  "label": []
-}
-```
-
-按导出选项不同，还可能包含这些可选字段：
-
-- `heightmap`
-- `flux_map`
-- `land_mask`
-- `land_polygons`
-
-其中：
-
-- CLI 默认会导出这些栅格数据
-- Web 场景可以通过 `MapExportOptions { include_raster_data: false }` 关闭，减少 WASM 到 JS 的数据传输
+- `svg`
 
 ## 作为 Rust 库使用
 
@@ -337,9 +236,7 @@ let draw_data = generator.collect_draw_data_with_options(MapExportOptions {
 });
 ```
 
-### 导出标准 SVG
-
-需要启用 `svg` feature：
+### 标准 SVG 导出
 
 ```rust
 use fantasy_map_generator::standard_svg::build_map_svg;
@@ -361,118 +258,7 @@ std::fs::write("examples/output-standard.svg", svg)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### 导出仅保留河流和边界的简化 SVG
-
-需要启用 `svg` feature：
-
-```rust
-use fantasy_map_generator::standard_svg::build_map_svg;
-
-let map_json = std::fs::read_to_string("examples/output.json")?;
-let layers_json = serde_json::json!({
-    "slope": false,
-    "river": true,
-    "contour": false,
-    "border": true,
-    "city": false,
-    "town": false,
-    "label": false
-})
-.to_string();
-
-let svg = build_map_svg(&map_json, &layers_json)?;
-std::fs::write("examples/output-rivers-borders.svg", svg)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-### 导出卫星风格 SVG
-
-需要启用 `svg` feature，并且输入 JSON 里必须包含 `heightmap` 和 `land_mask`。
-
-```rust
-use fantasy_map_generator::satellite_svg::build_satellite_svg;
-
-let map_json = std::fs::read_to_string("examples/output.json")?;
-let layers_json = serde_json::json!({
-    "slope": true,
-    "river": true,
-    "contour": true,
-    "border": true,
-    "city": true,
-    "town": true,
-    "label": true
-})
-.to_string();
-
-let svg = build_satellite_svg(&map_json, &layers_json)?;
-std::fs::write("examples/output-satellite.svg", svg)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-### 导出更轻量的卫星预览 SVG
-
-预览 SVG 会通过更小的内嵌纹理和更低的 JPEG 质量，换取更小的文件体积。
-
-```rust
-use fantasy_map_generator::satellite_svg::build_satellite_svg_with_options;
-
-let map_json = std::fs::read_to_string("examples/output.json")?;
-let layers_json = serde_json::json!({
-    "slope": false,
-    "river": true,
-    "contour": false,
-    "border": false,
-    "city": false,
-    "town": false,
-    "label": false
-})
-.to_string();
-
-let options_json = serde_json::json!({
-    "max_embedded_image_size": 512,
-    "jpeg_quality": 60
-})
-.to_string();
-
-let svg = build_satellite_svg_with_options(&map_json, &layers_json, Some(&options_json))?;
-std::fs::write("examples/output-satellite-preview.svg", svg)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-### 从内存中的 `MapDrawData` 直接导出卫星 SVG
-
-如果你不想先落盘 JSON，可以直接从 `MapGenerator` 导出：
-
-```rust
-use fantasy_map_generator::{Extents2d, GlibcRand, MapExportOptions, MapGenerator};
-use fantasy_map_generator::presentation::satellite_svg::{SatelliteSvgLayers, SatelliteSvgOptions};
-use fantasy_map_generator::satellite_svg::build_satellite_svg_from_data;
-
-let extents = Extents2d::new(0.0, 0.0, 20.0, 10.0);
-let rng = GlibcRand::new(12345);
-let mut generator = MapGenerator::new(extents, 0.08, 1920, 1080, rng);
-
-generator.initialize();
-generator.add_hill(10.0, 5.0, 3.0, 1.2);
-generator.normalize();
-
-let map_data = generator.collect_draw_data_with_options(MapExportOptions {
-    include_raster_data: true,
-});
-
-let svg = build_satellite_svg_from_data(
-    &map_data,
-    SatelliteSvgLayers::default(),
-    SatelliteSvgOptions::default(),
-)?;
-
-std::fs::write("examples/output-satellite-from-data.svg", svg)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
 ### PNG 渲染
-
-需要启用 `render` feature：
 
 ```rust
 use fantasy_map_generator::render::render_map;
@@ -482,230 +268,281 @@ render_map(&json, "examples/output.png")?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-也可以直接使用 `MapRenderer`、`RenderStyle` 和 `Color` 做自定义样式渲染。
+## 常见导出场景
 
-### 一个推荐的命令行导出流程
+### 1. 只要一份 JSON
 
-如果你更习惯先用 CLI 生成 JSON，再用库函数导出不同 SVG，可以按这个顺序：
+适合：
+
+- 调试生成逻辑
+- 后续自己写渲染器
+- 保存可复现输入
+
+```bash
+cargo run --release -- --seed 12345 --output examples/map_only
+```
+
+### 2. JSON + PNG
+
+适合：
+
+- 离线渲染
+- 生成预览图或归档图
+
+```bash
+cargo run --release --features render -- --seed 12345 --output examples/map_png
+```
+
+### 3. JSON + 标准 SVG
+
+适合：
+
+- 矢量编辑
+- 排版、出版或二次设计
+
+```bash
+cargo run --release --features svg -- --seed 12345 --svg --output examples/map_svg
+```
+
+### 4. Web 实时生成
+
+适合：
+
+- 前端实时换种子
+- WebGPU / SVG 双渲染
+- 用户交互式预览
 
 ```bash
 cd rust
-
-# 先生成带栅格数据的 JSON
-cargo run --release -- --seed 12345 --output examples/export_demo
-
-# 然后在你自己的 Rust 小工具或测试代码里读取：
-# - examples/export_demo.json
-# - build_map_svg(...)
-# - build_satellite_svg(...)
+./build-wasm.sh
+cd examples
+pnpm dev
 ```
 
-其中：
+## 更多命令示例
 
+### 1. 使用时间种子生成一张随机图
+
+```bash
+cd rust
+cargo run --release -- --timeseed --output examples/random_map
+```
+
+### 2. 指定更高分辨率和更大尺寸
+
+```bash
+cd rust
+cargo run --release -- --seed 424242 --resolution 0.06 --size 2560:1440 --output examples/large_map
+```
+
+### 3. 关闭部分图层生成更干净的底图
+
+```bash
+cd rust
+cargo run --release -- --seed 12345 --no-cities --no-towns --no-labels --output examples/base_map
+```
+
+### 4. 只导出标准 SVG，不渲染 PNG
+
+```bash
+cd rust
+cargo run --release --features "render svg" -- --seed 12345 --svg --no-render --output examples/vector_map
+```
+
+### 5. 前端开发前先重建 WASM
+
+```bash
+cd rust
+./build-wasm.sh
+cd examples
+pnpm dev
+```
+
+### 6. 前端生产构建
+
+```bash
+cd rust/examples
+pnpm build
+pnpm preview
+```
+
+## JSON 导出格式
+
+CLI 默认导出的核心结构是 `MapDrawData`，主要字段包括：
+
+```json
+{
+  "image_width": 1920,
+  "image_height": 1080,
+  "draw_scale": 1.0,
+  "contour": [],
+  "river": [],
+  "slope": [],
+  "city": [],
+  "town": [],
+  "territory": [],
+  "label": []
+}
+```
+
+当启用栅格导出时，还会包含：
+
+- `heightmap`
+- `flux_map`
+- `land_mask`
+- `land_polygons`
+
+说明：
+
+- CLI 默认走 `get_draw_data()`，会带这些栅格字段
+- Web 前端首图生成默认不保留完整 JSON，而是在用户首次导出 JSON 时按需生成并缓存
 - 标准 SVG 只依赖矢量层数据
-- 卫星 SVG 依赖 `heightmap` 和 `land_mask`
-- 如果你在导出 JSON 时手动关闭了栅格数据，卫星 SVG 会报缺少必要字段
 
-## 按用途分类的导出示例
+## WASM 导出接口
 
-### 1. 出版或高质量归档
-
-目标：
-
-- 保留完整图层
-- 使用标准 SVG 或高质量卫星 SVG
-- 优先保证可缩放和输出质量
-
-建议：
-
-- 标准风格用 `build_map_svg(...)`
-- 卫星风格用 `build_satellite_svg(...)`
-- CLI 先生成完整 JSON，不要裁掉栅格字段
-
-示例：
-
-```bash
-cd rust
-cargo run --release -- --seed 424242 --size 3840:2160 --output examples/atlas_map
-```
-
-后续可导出：
-
-- `examples/atlas_map.json`
-- `examples/atlas_map-standard.svg`
-- `examples/atlas_map-satellite.svg`
-
-### 2. 网页预览或分享图
-
-目标：
-
-- 文件更小
-- 浏览器加载更快
-- 对细节损失不敏感
-
-建议：
-
-- 标准 SVG 只保留关键图层
-- 卫星 SVG 使用较小 `max_embedded_image_size`
-- 降低 `jpeg_quality`
-
-示例配置：
-
-```json
-{
-  "max_embedded_image_size": 512,
-  "jpeg_quality": 60
-}
-```
-
-适合：
-
-- 文档预览
-- 前端 demo 默认导出
-- 即时分享
-
-### 3. 只导出底图
-
-目标：
-
-- 不显示城市、城镇、标签
-- 保留自然地形和边界主体
-
-标准 SVG 图层示例：
-
-```json
-{
-  "slope": true,
-  "river": true,
-  "contour": true,
-  "border": true,
-  "city": false,
-  "town": false,
-  "label": false
-}
-```
-
-适合：
-
-- 后续在其他软件中叠加标注
-- 作为 UI/游戏底图素材
-- 做二次设计
-
-### 4. 只导出叠加层
-
-目标：
-
-- 只保留河流、边界、城市或标签等信息层
-- 方便叠加到其他底图或材质上
-
-一个常见配置是仅保留河流和边界：
-
-```json
-{
-  "slope": false,
-  "river": true,
-  "contour": false,
-  "border": true,
-  "city": false,
-  "town": false,
-  "label": false
-}
-```
-
-如果想做纯标注层，也可以这样：
-
-```json
-{
-  "slope": false,
-  "river": false,
-  "contour": false,
-  "border": false,
-  "city": true,
-  "town": true,
-  "label": true
-}
-```
-
-### 5. 为前端 Three.js / WebGPU 准备数据
-
-目标：
-
-- 不直接导出 SVG/PNG
-- 导出给网页渲染器消费的结构化场景数据
-
-建议：
-
-- 浏览器端直接走 `WasmMapGenerator::generate_render_packet(...)`
-- 如果是离线处理流程，则保留完整 JSON 和栅格数据
-
-这条路径更适合：
-
-- 交互式地图查看器
-- 自定义 3D 地形展示
-- Rust 生成、前端实时渲染的工作流
-
-## 图层配置速查
-
-标准 SVG 和卫星 SVG 当前都支持这组逻辑图层开关：
-
-- `slope`
-- `river`
-- `contour`
-- `border`
-- `city`
-- `town`
-- `label`
-
-经验上可以这样选：
-
-- 想突出地形：开启 `slope`、`contour`
-- 想突出行政和文明痕迹：开启 `border`、`city`、`town`、`label`
-- 想做干净底图：关闭 `city`、`town`、`label`
-- 想做 overlay：只保留 `river`、`border` 或 `label`
-
-## WASM 与前端集成
-
-启用 `wasm` feature 后，当前会导出这些浏览器侧能力：
+启用 `wasm` feature 后，当前对浏览器暴露这些接口：
 
 - `WasmMapGenerator`
 - `generate_map_simple`
 - `build_map_svg`
-- `build_satellite_svg`
-- `build_satellite_svg_with_options`
 - `presentation_plugin_metadata_json`
 
-其中 `WasmMapGenerator` 除了返回 JSON，还支持：
+`WasmMapGenerator` 当前提供：
 
+- `generate(...)`
 - `generate_with_options(...)`
 - `generate_terrain_only()`
 - `generate_render_packet(...)`
 - `set_draw_scale(...)`
 - `get_seed()`
 
-`generate_render_packet(...)` 会返回前端 `Three.js/WebGPU` 渲染所需的：
+`generate_render_packet(...)` 当前返回：
 
-- 地形网格顶点、法线、UV、索引
-- height / land mask / flux / albedo 等纹理数据
-- slope / river / contour / border 的路径数据
-- city / town / label 的展示数据
+- `metadata_json`
+- `svg_json`
+- 地形网格：positions / normals / uvs / indices
+- 纹理：`height` / `land_mask` / `flux` / `terrain_albedo` / `roughness` / `ao` / `water_*`
+- 图层路径：`slope` / `river` / `contour` / `border`
+- 标记与标签数据
+
+当前**不再**通过 render packet 返回完整 `map_json` 或单独 `albedo_texture`。
+
+这意味着：
+
+- CLI 仍然是完整 JSON 的稳定出口
+- 前端首图不会为“未来可能导出 JSON”提前付序列化成本
+- 用户第一次点击 JSON 导出时，前端才会回源生成完整 JSON 并缓存
+
+## 渲染流程
+
+### Rust `render` 模块 PNG 渲染顺序
+
+当前 `render` feature 下的 PNG 渲染顺序与 [renderer.rs](./src/render/renderer.rs) 一致：
+
+1. 清空背景
+2. 绘制坡度阴影
+3. 绘制领土边界底色和边界线
+4. 绘制河流
+5. 绘制等高线
+6. 绘制城市标记
+7. 绘制城镇标记
+8. 绘制文字标签
+
+说明：
+
+- 第 8 步的文字渲染接口已接好，但底层仍不是完整排版系统
+- 领土边界当前是“白底 + 黑线”两层渲染
+
+### Web 前端渲染顺序
+
+当前网页示例有两条渲染路径：
+
+- `SVG`：后台 worker 生成标准 SVG，主线程只负责挂载与视口变换
+- `WebGPU`：加载 render packet，构建地形、路径、标记和标签
+
+当前 WebGPU 场景大致顺序是：
+
+1. 背景平面
+2. 灯光
+3. 地形网格
+4. 水面覆盖层
+5. 坡线 / 河流 / 海岸线 / 边界
+6. 城市与城镇标记
+7. 标签
+
+图层切换时：
+
+- WebGPU 路径优先走显隐更新，不重建整棵场景
+- SVG 路径只失效 SVG 缓存并按需重建
+
+## 坐标系统
+
+当前项目涉及 3 套主要坐标表示：
+
+### 1. `MapDrawData` 归一化坐标
+
+Rust 核心生成层导出的矢量坐标通常在 `[0, 1]` 范围内：
+
+- `x = 0` 表示地图左侧
+- `x = 1` 表示地图右侧
+- `y = 0` 表示地图底部
+- `y = 1` 表示地图顶部
+
+这层坐标最适合跨后端复用。
+
+### 2. 前端场景世界坐标
+
+在前端 `mapScenePacket` 转换阶段：
+
+- `x` 被映射到 `(-0.5 .. 0.5) * imageWidth`
+- `z` 被映射到 `(-0.5 .. 0.5) * imageHeight`
+- `y` 作为海拔高度或覆盖层高度
+
+同时，采样高度时会使用 `1 - normalizedY`，把生成层的“底部为 0”转换成纹理 / 屏幕习惯的“顶部为 0”。
+
+### 3. Three.js 坐标适配
+
+当前前端渲染器会通过 `packetToThreeTriplets(...)` 做一次轴重排：
+
+- 生成包里的 `(x, y, z)`
+- 转成 Three.js 使用的 `(x, z, y)`
+
+所以：
+
+- 地图平面最终落在 `X/Z` 平面上
+- 海拔抬升落在 Three.js 的 `Y` 方向
+
+### SVG 坐标
+
+标准 SVG 导出直接把归一化坐标映射成像素坐标：
+
+- `x = nx * width`
+- `y = height - ny * height`
+
+也就是：
+
+- Rust 生成层仍以“底部为 0”
+- SVG 输出时翻转成浏览器 SVG 常见的“顶部为 0”
 
 ## Presentation 插件层
 
-`src/presentation/` 是当前实现里新增的展示数据适配层，核心目的是把 `MapDrawData` 转成不同前端/渲染器更适合消费的结构化数据。
-
-当前内置插件：
+`src/presentation/` 当前内置的插件只有：
 
 - `standard_svg`
 - `webgpu_scene`
-- `satellite_svg`，仅在 `svg` feature 下进入 metadata registry
 
-可通过 `presentation_plugin_metadata()` 或 `presentation_plugin_metadata_json()` 获取插件能力元数据。
+可以通过：
+
+- `presentation_plugin_metadata()`
+- `presentation_plugin_metadata_json()`
+
+读取插件元数据。
 
 ## 前端示例
 
-`rust/examples/` 是当前配套的 Web 演示工程，详细说明见 `examples/README.md`。
+`rust/examples/` 是配套网页演示，详见 `examples/README.md`。
 
-常见流程：
+典型流程：
 
 ```bash
 cd rust
@@ -716,11 +553,11 @@ pnpm install
 pnpm dev
 ```
 
-如果只改了前端代码，不改 Rust/WASM，通常不需要重新执行 `build-wasm.sh`。
+如果只改了 `examples/src/` 下的前端代码，通常不需要重建 WASM。
 
 ## 测试与验证
 
-当前建议的验证命令：
+建议的基本验证命令：
 
 ```bash
 cd rust
@@ -729,30 +566,68 @@ cargo test --features render
 cargo check --features wasm
 ```
 
-仓库里现有测试覆盖了：
+前端示例建议额外执行：
 
-- CLI 输出 JSON 基本结构
-- `presentation` metadata
-- `render` 配置与错误类型
-- 文档示例编译
+```bash
+cd rust/examples
+pnpm build
+```
+
+## 构建脚本
+
+- `build-wasm.sh`
+- `build-wasm.bat`
+
+两者当前都执行同一条构建命令：
+
+```bash
+wasm-pack build --target web --out-dir examples/pkg --features wasm
+```
+
+脚本只检查 `wasm-pack` 是否存在，不会自动安装依赖。
 
 ## 当前限制
 
-- `render` 模块的文字渲染仍是占位实现，不是完整字体排版系统
-- `RenderStyle` 中的线宽字段已保留，但当前渲染实现还没有把所有线宽配置完整映射到底层线条光栅化
-- Web 侧主要通过 `wasm-pack` 产物给 `examples/` 使用，不是单独发布到 npm 的通用包结构
-- 一些兼容性参数已保留在 CLI 中，但目前没有额外逻辑，例如 `--drawing-supported`
+- `render` 模块中的文字渲染仍然不是完整排版系统
+- `three.webgpu` 运行时代码体积仍较大，但已在前端构建中拆出主包
+- `--drawing-supported` 和 `--verbose` 仍是保留参数
+
+## 排障
+
+### `wasm-pack not found`
+
+先安装：
+
+```bash
+cargo install wasm-pack
+```
+
+### 启用 `render` 后没有 PNG
+
+检查：
+
+- 是否编译时启用了 `render`
+- 是否传了 `--no-render`
+
+### 修改 Rust 代码后前端效果没变
+
+通常是没有重新执行：
+
+```bash
+cd rust
+./build-wasm.sh
+```
+
+### Windows 下 `build-wasm.sh` 不能直接运行
+
+Windows 当前推荐直接执行：
+
+```bat
+build-wasm.bat
+```
 
 ## 参考
 
 - Martin O'Leary: <https://mewo2.com/notes/terrain/>
-- WebGPU 规范: <https://www.w3.org/TR/webgpu/>
-- WGSL 规范: <https://www.w3.org/TR/WGSL/>
-- `wgpu` 文档: <https://docs.rs/wgpu/>
-- Rust API Guidelines: <https://rust-lang.github.io/api-guidelines/>
-- 原始 C++ 项目源码：`../src/`
-- 原始 Python 渲染参考：`../src/render/rendermap.py`
-- 当前 Rust 核心生成实现：`src/map_generator.rs`
-- 当前 Rust PNG 渲染实现：`src/render/`
-- 当前 Rust presentation 插件层：`src/presentation/`
-- 当前 Rust WASM 导出层：`src/wasm.rs`
+- `wgpu`: <https://docs.rs/wgpu/>
+- Rust and WebAssembly Book: <https://rustwasm.github.io/book/>

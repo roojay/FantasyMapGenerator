@@ -250,19 +250,20 @@ pub struct DataStructure {
 ## 示例：完整注释的函数
 
 ```rust
-/// 使用 Planchon-Darboux 算法填充高度图中的凹陷
+/// 使用 priority-flood 风格的最小堆传播填充高度图中的凹陷
 ///
 /// 在生成流向图之前，必须确保高度图中没有凹陷（局部最低点）。
 /// 否则水流会被困在凹陷中，无法流向地图边缘。
 ///
 /// # 算法原理
-/// Planchon-Darboux 算法通过迭代提升凹陷区域的高度，
-/// 直到所有点都有一条下坡路径通向地图边缘。
+/// 当前实现采用“从边界向内扩张”的最小堆传播：
+/// 1. 边界点保持原始高度，作为初始前沿
+/// 2. 每次弹出当前高度最低的已确定点
+/// 3. 邻点高度被抬升到 `max(原始高度, 当前点 + ε)`
+/// 4. 重复直到所有点都有一条通往边界的非上升路径
 ///
-/// 算法步骤：
-/// 1. 初始化：边界点保持原高度，内部点设为无穷大
-/// 2. 迭代：对每个内部点，如果其高度大于任一邻居+ε，则降低其高度
-/// 3. 重复直到收敛（没有点的高度发生变化）
+/// 相比“反复全图扫描直到收敛”的写法，这种方式更适合当前浏览器和 WASM 场景，
+/// 能显著减少大图生成时的 CPU 消耗。
 ///
 /// # 为什么需要 ε
 /// ε 是一个很小的正数（1e-5），用于确保填充后的地形有微小的坡度。
@@ -280,59 +281,50 @@ pub struct DataStructure {
 ///   CATENA, vol. 46, no. 2-3, pp. 159-176, 2002.
 /// - 原始 C++ 实现: src/mapgenerator.cpp, fillDepressions()
 fn fill_depressions(&mut self) {
-    let max_h = self.height_map.max_val();
     let n = self.vertex_map.size();
-    
-    // 初始化最终高度图：边界点保持原值，内部点设为最大值
-    let mut final_hm = NodeMap::new_filled(n, max_h);
+    let mut final_hm = NodeMap::new_filled(n, f64::INFINITY);
+    let mut frontier = BinaryHeap::new();
 
-    // 设置边界点的高度
+    // 边界点保持原始高度，并作为 priority-flood 的初始前沿
     for i in 0..self.vertex_map.edge.len() {
         let v = self.vertex_map.edge[i];
         let idx = self.vertex_map.get_vertex_index(v) as usize;
         let hval = *self.height_map.get(idx);
         final_hm.set(idx, hval);
+        frontier.push(FloodNode {
+            height: hval,
+            index: idx,
+        });
     }
 
-    // ε 值：用于创建微小的坡度
-    // 这个值足够小，不会显著改变地形，但足够大，可以确定流向
     let eps = 1e-5;
-    
-    // 迭代直到收敛
-    loop {
-        let mut updated = false;
-        
-        for i in 0..n {
-            let h = *self.height_map.get(i);
-            let fh = *final_hm.get(i);
-            
-            // 如果当前点已经是原始高度，跳过
-            if h == fh { continue; }
-            
-            // 检查所有邻居
-            for &nb in &self.neighbour_map[i] {
-                let nval = *final_hm.get(nb);
-                
-                // 如果原始高度高于邻居，可以保持原始高度
-                if h >= nval + eps {
-                    final_hm.set(i, h);
-                    updated = true;
-                    break;
-                }
-                
-                // 否则，设置为邻居高度 + ε（创建微小坡度）
-                let hval = nval + eps;
-                if fh > hval && hval > h {
-                    final_hm.set(i, hval);
-                    updated = true;
-                }
+
+    while let Some(node) = frontier.pop() {
+        let current_height = *final_hm.get(node.index);
+        if node.height > current_height + eps {
+            continue;
+        }
+
+        for &nb in &self.neighbour_map[node.index] {
+            let original_height = *self.height_map.get(nb);
+            let candidate_height = original_height.max(node.height + eps);
+            if candidate_height + eps < *final_hm.get(nb) {
+                final_hm.set(nb, candidate_height);
+                frontier.push(FloodNode {
+                    height: candidate_height,
+                    index: nb,
+                });
             }
         }
-        
-        // 如果没有任何更新，算法收敛
-        if !updated { break; }
     }
-    
+
+    // 理论上所有点都会被覆盖；这里保留一次兜底，避免非法值残留
+    for i in 0..n {
+        if !final_hm.get(i).is_finite() {
+            final_hm.set(i, *self.height_map.get(i));
+        }
+    }
+
     self.height_map = final_hm;
 }
 ```

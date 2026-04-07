@@ -4,12 +4,17 @@
  */
 
 import { packetTransferables, scenePacketFromWasm } from "@/lib/mapScenePacket";
-import type { MapScenePacket } from "@/types/map";
+import type { GeneratedMapSource, MapScenePacket } from "@/types/map";
 
 type WasmModule = typeof import("../../pkg/fantasy_map_generator.js");
 
+interface InitMessage {
+  type: "init";
+}
+
 interface GenerateMessage {
   type: "generate";
+  requestId: number;
   seed: number;
   width: number;
   height: number;
@@ -19,39 +24,106 @@ interface GenerateMessage {
   towns: number;
 }
 
-interface GenerateResponse {
-  type: "success" | "error";
-  packet?: MapScenePacket;
-  seed?: number;
+interface ExportJsonMessage extends GeneratedMapSource {
+  type: "export-json";
+  requestId: number;
+}
+
+interface ReadyResponse {
+  type: "ready";
+}
+
+interface GenerateSuccessResponse {
+  type: "generate-success";
+  requestId: number;
+  packet: MapScenePacket;
+  seed: number;
+}
+
+interface ExportJsonSuccessResponse {
+  type: "json-success";
+  requestId: number;
+  json: string;
+}
+
+interface ErrorResponse {
+  type: "error";
+  requestId: number;
   error?: string;
 }
 
+type WorkerMessage = InitMessage | GenerateMessage | ExportJsonMessage;
+type WorkerResponse =
+  | ReadyResponse
+  | GenerateSuccessResponse
+  | ExportJsonSuccessResponse
+  | ErrorResponse;
+
 let wasmModule: WasmModule | null = null;
+let warmupComplete = false;
 const workerScope = self as typeof self & {
-  postMessage: (message: unknown, transfer?: Transferable[]) => void;
+  postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
 };
 
-self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
-  const { type, seed, width, height, resolution, drawScale, cities, towns } = event.data;
+async function ensureWasmModule() {
+  if (!wasmModule) {
+    const pkg = await import("../../pkg/fantasy_map_generator.js");
+    await pkg.default();
+    wasmModule = pkg;
+  }
 
-  if (type !== "generate") return;
+  return wasmModule;
+}
+
+async function ensureWarmedUpModule() {
+  const activeModule = await ensureWasmModule();
+
+  if (!warmupComplete) {
+    const generator = new activeModule.WasmMapGenerator(1, 256, 144, 0.16);
+    generator.set_draw_scale(1);
+    const packet = generator.generate_render_packet(0, 0);
+    packet.free();
+    generator.free();
+    warmupComplete = true;
+  }
+
+  return activeModule;
+}
+
+self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
+  const { type } = event.data;
+
+  if (type === "init") {
+    await ensureWarmedUpModule();
+    workerScope.postMessage({ type: "ready" });
+    return;
+  }
+
+  const { requestId, seed, width, height, resolution, drawScale, cities, towns } = event.data;
 
   try {
-    if (!wasmModule) {
-      const pkg = await import("../../pkg/fantasy_map_generator.js");
-      await pkg.default();
-      wasmModule = pkg;
-    }
+    const activeModule = await ensureWarmedUpModule();
 
-    const generator = new wasmModule.WasmMapGenerator(seed, width, height, resolution);
+    const generator = new activeModule.WasmMapGenerator(seed, width, height, resolution);
     generator.set_draw_scale(drawScale);
+
+    if (type === "export-json") {
+      const json = generator.generate_with_options(cities, towns, true);
+      generator.free();
+      workerScope.postMessage({
+        type: "json-success",
+        requestId,
+        json,
+      });
+      return;
+    }
 
     const wasmPacket = generator.generate_render_packet(cities, towns);
     const actualSeed = generator.get_seed();
 
     const packet = scenePacketFromWasm({
       metadataJson: wasmPacket.metadata_json,
-      mapJson: wasmPacket.map_json,
+      svgJson: wasmPacket.svg_json,
       terrainPositions: wasmPacket.terrain_positions(),
       terrainNormals: wasmPacket.terrain_normals(),
       terrainUvs: wasmPacket.terrain_uvs(),
@@ -59,7 +131,6 @@ self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
       heightTexture: wasmPacket.height_texture(),
       landMaskTexture: wasmPacket.land_mask_texture(),
       fluxTexture: wasmPacket.flux_texture(),
-      albedoTexture: wasmPacket.albedo_texture(),
       terrainAlbedoTexture: wasmPacket.terrain_albedo_texture(),
       roughnessTexture: wasmPacket.roughness_texture(),
       aoTexture: wasmPacket.ao_texture(),
@@ -81,20 +152,30 @@ self.onmessage = async (event: MessageEvent<GenerateMessage>) => {
       labelSizes: wasmPacket.label_sizes(),
       landPolygonPositions: wasmPacket.land_polygon_positions(),
       landPolygonOffsets: wasmPacket.land_polygon_offsets(),
+    }, {
+      seed: actualSeed,
+      width,
+      height,
+      resolution,
+      drawScale,
+      cities,
+      towns,
     });
 
     wasmPacket.free();
     generator.free();
 
-    const response: GenerateResponse = {
-      type: "success",
+    const response: GenerateSuccessResponse = {
+      type: "generate-success",
+      requestId,
       packet,
       seed: actualSeed,
     };
     workerScope.postMessage(response, packetTransferables(packet));
   } catch (error) {
-    const response: GenerateResponse = {
+    const response: ErrorResponse = {
       type: "error",
+      requestId,
       error: error instanceof Error ? error.message : String(error),
     };
     workerScope.postMessage(response);

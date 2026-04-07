@@ -174,15 +174,6 @@ export class WasmRenderPacket {
     /**
      * @returns {Uint8Array}
      */
-    albedo_texture() {
-        const ret = wasm.wasmrenderpacket_albedo_texture(this.__wbg_ptr);
-        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        return v1;
-    }
-    /**
-     * @returns {Uint8Array}
-     */
     ao_texture() {
         const ret = wasm.wasmrenderpacket_ao_texture(this.__wbg_ptr);
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
@@ -327,21 +318,6 @@ export class WasmRenderPacket {
     /**
      * @returns {string}
      */
-    get map_json() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.wasmrenderpacket_map_json(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {string}
-     */
     get metadata_json() {
         let deferred1_0;
         let deferred1_1;
@@ -389,6 +365,21 @@ export class WasmRenderPacket {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get svg_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmrenderpacket_svg_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * @returns {Uint8Array}
