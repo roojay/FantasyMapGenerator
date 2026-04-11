@@ -237,15 +237,6 @@ export class WasmRenderPacket {
     /**
      * @returns {Uint8Array}
      */
-    flux_texture() {
-        const ret = wasm.wasmrenderpacket_flux_texture(this.__wbg_ptr);
-        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        return v1;
-    }
-    /**
-     * @returns {Uint8Array}
-     */
     height_texture() {
         const ret = wasm.wasmrenderpacket_height_texture(this.__wbg_ptr);
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
@@ -286,15 +277,6 @@ export class WasmRenderPacket {
         const ret = wasm.wasmrenderpacket_label_sizes(this.__wbg_ptr);
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {Uint8Array}
-     */
-    land_mask_texture() {
-        const ret = wasm.wasmrenderpacket_land_mask_texture(this.__wbg_ptr);
-        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
     }
     /**

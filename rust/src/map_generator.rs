@@ -94,14 +94,63 @@ use crate::utils::rand::GlibcRand;
 #[derive(Clone, Copy, Debug)]
 pub struct MapExportOptions {
     pub include_raster_data: bool,
+    pub max_raster_dimension: Option<u32>,
+    pub max_raster_texels: Option<u32>,
 }
 
 impl Default for MapExportOptions {
     fn default() -> Self {
         Self {
             include_raster_data: true,
+            max_raster_dimension: None,
+            max_raster_texels: None,
         }
     }
+}
+
+fn clamp_raster_size(
+    width: u32,
+    height: u32,
+    max_dimension: Option<u32>,
+    max_texels: Option<u32>,
+) -> (u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+
+    let Some(max_dimension) = max_dimension else {
+        if let Some(max_texels) = max_texels {
+            let texel_count = u64::from(width) * u64::from(height);
+            if texel_count <= u64::from(max_texels) {
+                return (width, height);
+            }
+
+            let scale = (max_texels as f64 / texel_count as f64).sqrt().min(1.0);
+            return (
+                ((width as f64 * scale).round() as u32).max(1),
+                ((height as f64 * scale).round() as u32).max(1),
+            );
+        }
+
+        return (width, height);
+    };
+
+    let dimension_scale = f64::min(max_dimension as f64 / width as f64, max_dimension as f64 / height as f64);
+    let texel_scale = if let Some(max_texels) = max_texels {
+        let texel_count = u64::from(width) * u64::from(height);
+        if texel_count <= u64::from(max_texels) {
+            1.0
+        } else {
+            (max_texels as f64 / texel_count as f64).sqrt()
+        }
+    } else {
+        1.0
+    };
+    let scale = dimension_scale.min(texel_scale).min(1.0);
+
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3661,9 +3710,16 @@ impl MapGenerator {
         };
 
         if options.include_raster_data {
-            // 导出栅格数据（降采样以减小文件大小）
-            let raster_width = self.img_width / 4;
-            let raster_height = self.img_height / 4;
+            // 导出栅格数据。交互预览和最终导出可以使用不同的 raster 上限，
+            // 避免高分辨率预设把浏览器拖进不必要的 OOM 风险。
+            let default_raster_width = (self.img_width / 4).max(1);
+            let default_raster_height = (self.img_height / 4).max(1);
+            let (raster_width, raster_height) = clamp_raster_size(
+                default_raster_width,
+                default_raster_height,
+                options.max_raster_dimension,
+                options.max_raster_texels,
+            );
             let heightmap = self.export_heightmap(raster_width, raster_height);
             let flux_map = self.export_flux_map(raster_width, raster_height);
             let land_mask = self.export_land_mask(raster_width, raster_height);
@@ -3816,6 +3872,24 @@ fn intersect_with_horizontal(start: Point, end: Point, bound: f64) -> Point {
 
     let t = (bound - start.y) / dy;
     Point::new(start.x + (end.x - start.x) * t, bound)
+}
+
+#[cfg(test)]
+mod map_export_option_tests {
+    use super::clamp_raster_size;
+
+    #[test]
+    fn clamp_raster_size_keeps_small_dimensions() {
+        assert_eq!(clamp_raster_size(480, 270, Some(1024), Some(1_000_000)), (480, 270));
+    }
+
+    #[test]
+    fn clamp_raster_size_respects_dimension_and_texel_limits() {
+        let (width, height) = clamp_raster_size(1920, 1080, Some(1024), Some(1_000_000));
+        assert!(width <= 1024);
+        assert!(height <= 1024);
+        assert!(u64::from(width) * u64::from(height) <= 1_000_000);
+    }
 }
 
 /// Smooths a sequence of (x, y) positions using a Laplacian filter:

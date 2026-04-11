@@ -43,7 +43,7 @@ export function ControlPanel({
       className="grid h-full grid-rows-[auto_1fr_auto]"
       style={{ backgroundColor: "var(--mantine-color-body)" }}
     >
-      <Box className="border-b px-4 py-4" style={{ borderColor: "rgb(var(--app-border))" }}>
+      <Box className="border-b px-4 py-4 sm:px-5" style={{ borderColor: "rgb(var(--app-border))" }}>
         <Text fw={700} size="lg">
           {t("app.title")}
         </Text>
@@ -52,15 +52,15 @@ export function ControlPanel({
         </Text>
       </Box>
 
-      <Box className="overflow-y-auto px-3 py-3 sidebar-scroll">
+      <Box className="sidebar-scroll overflow-y-auto px-3 py-3 sm:px-4">
         <Accordion
           defaultValue={["map", "locations", "rendering"]}
           multiple
           variant="separated"
           classNames={{
             item: cn("border-b border-[rgb(var(--app-border))]", "rounded-lg overflow-hidden"),
-            control: cn("panel-control-hover", "transition-colors duration-200"),
-            label: "text-xs font-semibold uppercase tracking-wider",
+            control: cn("panel-control-hover", "transition-colors duration-200", "px-3 py-2.5"),
+            label: "text-[11px] font-semibold uppercase tracking-wider sm:text-xs",
             chevron: "text-[rgb(var(--app-muted))]",
           }}
         >
@@ -88,7 +88,7 @@ export function ControlPanel({
                     </Tooltip>
                   </Group>
                   <NumberInput
-                    size="xs"
+                    size="sm"
                     value={config.seed}
                     min={0}
                     max={999999}
@@ -111,14 +111,14 @@ export function ControlPanel({
                   </Text>
                   <div className="grid grid-cols-2 gap-2">
                     <NumberInput
-                      size="xs"
+                      size="sm"
                       value={config.width}
                       min={640}
                       max={16384}
                       onChange={(value) => onConfigChange("width", Number(value) || 1920)}
                     />
                     <NumberInput
-                      size="xs"
+                      size="sm"
                       value={config.height}
                       min={480}
                       max={16384}
@@ -129,18 +129,18 @@ export function ControlPanel({
                     {presets.map((preset) => (
                       <Button
                         key={preset.label}
-                        size="xs"
+                        size="sm"
                         variant="light"
                         color="gray"
                         className="min-w-0 cursor-pointer"
                         classNames={{
                           root: cn(
-                            "px-2!",
+                            "px-1.5!",
                             "hover:scale-105 active:scale-95",
                             "transition-transform duration-200",
                           ),
                           inner: "min-w-0 px-0",
-                          label: "truncate",
+                          label: "whitespace-nowrap text-[0.78rem] tracking-0",
                         }}
                         onClick={() => {
                           onConfigChange("width", preset.width);
@@ -174,7 +174,7 @@ export function ControlPanel({
                     </ActionIcon>
                   </Group>
                   <NumberInput
-                    size="xs"
+                    size="sm"
                     value={config.resolution}
                     min={0.01}
                     max={0.2}
@@ -258,9 +258,9 @@ export function ControlPanel({
         </Accordion>
       </Box>
 
-      <Box className="px-3 pb-6 pt-3">
+      <Box className="px-3 pb-6 pt-3 sm:px-4">
         <Button
-          size="xss"
+          size="sm"
           fullWidth
           loading={isBusy}
           className="cursor-pointer"

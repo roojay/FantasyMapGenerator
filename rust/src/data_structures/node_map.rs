@@ -213,3 +213,128 @@ impl NodeMap<f64> {
         self.set_level(median);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_default_filled() {
+        let nm: NodeMap<f64> = NodeMap::new(5);
+        assert_eq!(nm.size(), 5);
+        for i in 0..5 {
+            assert_eq!(*nm.get(i), 0.0);
+        }
+    }
+
+    #[test]
+    fn new_filled_creates_with_value() {
+        let nm = NodeMap::new_filled(3, 42.0);
+        assert_eq!(nm.size(), 3);
+        assert_eq!(*nm.get(0), 42.0);
+        assert_eq!(*nm.get(2), 42.0);
+    }
+
+    #[test]
+    fn get_set_roundtrip() {
+        let mut nm: NodeMap<i32> = NodeMap::new(3);
+        nm.set(1, 99);
+        assert_eq!(*nm.get(0), 0);
+        assert_eq!(*nm.get(1), 99);
+        assert_eq!(*nm.get(2), 0);
+    }
+
+    #[test]
+    fn get_mut_allows_in_place_modification() {
+        let mut nm = NodeMap::new_filled(2, 10.0);
+        *nm.get_mut(0) += 5.0;
+        assert_eq!(*nm.get(0), 15.0);
+        assert_eq!(*nm.get(1), 10.0);
+    }
+
+    #[test]
+    fn fill_overwrites_all() {
+        let mut nm = NodeMap::new_filled(3, 1.0);
+        nm.fill(7.0);
+        for i in 0..3 {
+            assert_eq!(*nm.get(i), 7.0);
+        }
+    }
+
+    #[test]
+    fn min_max_val() {
+        let mut nm = NodeMap::new(4);
+        nm.set(0, 3.0);
+        nm.set(1, -1.0);
+        nm.set(2, 5.0);
+        nm.set(3, 2.0);
+        assert_eq!(nm.min_val(), -1.0);
+        assert_eq!(nm.max_val(), 5.0);
+    }
+
+    #[test]
+    fn normalize_maps_to_zero_one() {
+        let mut nm = NodeMap::new(3);
+        nm.set(0, 10.0);
+        nm.set(1, 20.0);
+        nm.set(2, 30.0);
+        nm.normalize();
+        assert!((*nm.get(0) - 0.0).abs() < 1e-12);
+        assert!((*nm.get(1) - 0.5).abs() < 1e-12);
+        assert!((*nm.get(2) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn normalize_uniform_values_no_change() {
+        let mut nm = NodeMap::new_filled(3, 5.0);
+        nm.normalize();
+        // Uniform values stay as-is (range < epsilon)
+        assert_eq!(*nm.get(0), 5.0);
+    }
+
+    #[test]
+    fn round_applies_sqrt_after_normalize() {
+        let mut nm = NodeMap::new(3);
+        nm.set(0, 0.0);
+        nm.set(1, 0.25);
+        nm.set(2, 1.0);
+        nm.round();
+        // After normalize: [0.0, 0.25, 1.0]
+        // After sqrt:      [0.0, 0.5, 1.0]
+        assert!((*nm.get(0)).abs() < 1e-12);
+        assert!((*nm.get(1) - 0.5).abs() < 1e-12);
+        assert!((*nm.get(2) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn set_level_subtracts_from_all() {
+        let mut nm = NodeMap::new_filled(3, 10.0);
+        nm.set_level(3.0);
+        for i in 0..3 {
+            assert_eq!(*nm.get(i), 7.0);
+        }
+    }
+
+    #[test]
+    fn set_level_to_median_centers_values() {
+        let mut nm = NodeMap::new(5);
+        nm.set(0, 1.0);
+        nm.set(1, 2.0);
+        nm.set(2, 3.0);
+        nm.set(3, 4.0);
+        nm.set(4, 5.0);
+        nm.set_level_to_median();
+        // median = 3.0, so values become [-2, -1, 0, 1, 2]
+        assert!((*nm.get(2)).abs() < 1e-12);
+        assert_eq!(*nm.get(0), -2.0);
+        assert_eq!(*nm.get(4), 2.0);
+    }
+
+    #[test]
+    fn clone_is_independent() {
+        let mut nm = NodeMap::new_filled(2, 1.0);
+        let cloned = nm.clone();
+        nm.set(0, 99.0);
+        assert_eq!(*cloned.get(0), 1.0);
+    }
+}

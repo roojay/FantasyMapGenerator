@@ -219,3 +219,106 @@ fn get_extents(points: &[Point]) -> Extents2d {
 
     e
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_grid_points() -> Vec<Point> {
+        // 4x4 grid from (0,0) to (3,3)
+        let mut pts = Vec::new();
+        for y in 0..4 {
+            for x in 0..4 {
+                pts.push(Point::new(x as f64, y as f64));
+            }
+        }
+        pts
+    }
+
+    #[test]
+    fn empty_grid_returns_zero_count() {
+        let grid = SpatialPointGrid::new(&[], 1.0);
+        let count = grid.get_point_count(Extents2d::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn empty_grid_returns_empty_indices() {
+        let grid = SpatialPointGrid::new(&[], 1.0);
+        let indices = grid.get_point_indices(Extents2d::new(0.0, 0.0, 10.0, 10.0));
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn count_all_points_in_large_query() {
+        // Points centered within grid cells so none fall on the exact max boundary
+        let pts: Vec<Point> = (0..16)
+            .map(|i| Point::new((i % 4) as f64 * 0.9, (i / 4) as f64 * 0.9))
+            .collect();
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        let count = grid.get_point_count(Extents2d::new(-1.0, -1.0, 5.0, 5.0));
+        // All 16 points should be within (0,0) to (2.7,2.7), well inside the query
+        assert_eq!(count, 16);
+    }
+
+    #[test]
+    fn count_subset_of_points() {
+        let pts = make_grid_points();
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        // Query covering (0,0) to (2,2) exclusive → points (0,0), (1,0), (0,1), (1,1)
+        let count = grid.get_point_count(Extents2d::new(0.0, 0.0, 2.0, 2.0));
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn indices_match_count() {
+        let pts = make_grid_points();
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        let ext = Extents2d::new(0.0, 0.0, 2.0, 2.0);
+        let count = grid.get_point_count(ext);
+        let indices = grid.get_point_indices(ext);
+        assert_eq!(indices.len(), count);
+    }
+
+    #[test]
+    fn indices_refer_to_correct_points() {
+        let pts = make_grid_points();
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        let ext = Extents2d::new(0.0, 0.0, 1.5, 1.5);
+        let indices = grid.get_point_indices(ext);
+        for &idx in &indices {
+            let p = pts[idx];
+            assert!(ext.contains_point(p), "point ({}, {}) outside query", p.x, p.y);
+        }
+    }
+
+    #[test]
+    fn query_outside_returns_zero() {
+        let pts = make_grid_points();
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        let count = grid.get_point_count(Extents2d::new(100.0, 100.0, 200.0, 200.0));
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn single_point_grid() {
+        let pts = vec![Point::new(5.0, 5.0)];
+        let grid = SpatialPointGrid::new(&pts, 1.0);
+        assert_eq!(grid.get_point_count(Extents2d::new(4.0, 4.0, 6.0, 6.0)), 1);
+        assert_eq!(grid.get_point_count(Extents2d::new(6.0, 6.0, 7.0, 7.0)), 0);
+    }
+
+    #[test]
+    fn get_extents_computes_bounding_box() {
+        let pts = vec![
+            Point::new(1.0, -2.0),
+            Point::new(3.0, 5.0),
+            Point::new(-1.0, 0.0),
+        ];
+        let e = get_extents(&pts);
+        assert_eq!(e.minx, -1.0);
+        assert_eq!(e.miny, -2.0);
+        assert_eq!(e.maxx, 3.0);
+        assert_eq!(e.maxy, 5.0);
+    }
+}

@@ -184,9 +184,7 @@ function AppContent() {
   }, []);
 
   const hydrateMap = useCallback((packet: MapScenePacket) => {
-    startTransition(() => {
-      setMapData(packet);
-    });
+    setMapData(packet);
   }, []);
 
   const generateMapData = useCallback(async () => {
@@ -198,6 +196,7 @@ function AppContent() {
       detail: t("messages.generatingHint"),
     });
 
+    const genStart = performance.now();
     try {
       const result = await generateMap({
         seed: config.seed,
@@ -208,8 +207,15 @@ function AppContent() {
         cities: config.cities,
         towns: config.towns,
       });
+      const genEnd = performance.now();
 
       setConfig((current) => ({ ...current, seed: result.seed }));
+      // Store generation timing — rendering timing will be added in onRenderComplete
+      (window as unknown as Record<string, unknown>).__perfTimings = {
+        ...((window as unknown as Record<string, unknown>).__perfTimings as object ?? {}),
+        generationMs: Math.round(genEnd - genStart),
+        renderStartMs: genEnd,
+      };
       hydrateMap(result.packet);
       setStatus({ tone: "neutral", text: t("status.rendering") });
       setBlockingTask({
@@ -229,6 +235,11 @@ function AppContent() {
   const handleGenerate = useCallback(async () => {
     await generateMapData();
   }, [generateMapData]);
+
+  const handleGenerateFromPanel = useCallback(async () => {
+    closeMobilePanel();
+    await handleGenerate();
+  }, [closeMobilePanel, handleGenerate]);
 
   const handleImportFile = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -361,12 +372,12 @@ function AppContent() {
       config={config}
       isBusy={controlsBusy}
       onConfigChange={updateConfig}
-      onGenerate={handleGenerate}
+      onGenerate={handleGenerateFromPanel}
     />
   ) : null;
 
   return (
-    <Box className="grid h-dvh w-full overflow-hidden lg:grid-cols-[auto_1fr]">
+    <Box className="grid h-dvh min-h-0 w-full overflow-hidden xl:grid-cols-[auto_1fr]">
       <input
         ref={fileInputRef}
         type="file"
@@ -380,15 +391,15 @@ function AppContent() {
         className={cn(
           "hidden overflow-hidden",
           "border-r transition-[width] duration-300 ease-in-out",
-          "lg:block",
-          sidebarOpen ? "w-[320px] 2xl:w-[360px]" : "w-0 border-r-0",
+          "xl:block",
+          sidebarOpen ? "w-[300px] 2xl:w-[340px]" : "w-0 border-r-0",
         )}
         style={{
           borderColor: "rgb(var(--app-border))",
           backgroundColor: "var(--mantine-color-body)",
         }}
       >
-        <Box className="h-full w-[320px] 2xl:w-[360px]">{sidebar}</Box>
+        <Box className="h-full w-[300px] 2xl:w-[340px]">{sidebar}</Box>
       </Box>
 
       {/* Main content */}
@@ -417,6 +428,16 @@ function AppContent() {
               setAvailableModes(modes);
             }}
             onRenderComplete={(mode) => {
+              const renderEnd = performance.now();
+              const timings = (window as unknown as Record<string, unknown>).__perfTimings as Record<string, number> | undefined;
+              if (timings?.renderStartMs) {
+                const renderMs = Math.round(renderEnd - timings.renderStartMs);
+                const totalMs = timings.generationMs + renderMs;
+                Object.assign(timings, { renderMs, totalMs });
+                const wt = (window as unknown as Record<string, unknown>).__workerTiming as Record<string, number> | undefined;
+                console.log(`[PERF] Generation: ${timings.generationMs}ms | Render: ${renderMs}ms | Total: ${totalMs}ms` +
+                  (wt ? ` | (WASM: ${wt.wasmGenerateMs}ms, Extract: ${wt.packetExtractMs}ms)` : ""));
+              }
               setLoading(false);
               setRendererSwitching(false);
               setBlockingTask(null);
@@ -436,7 +457,7 @@ function AppContent() {
         ) : null}
 
         {/* Sidebar toggle */}
-        <Box className="absolute left-3 top-3 z-40 hidden lg:block">
+        <Box className="absolute left-3 top-3 z-40 hidden xl:block">
           <Tooltip
             label={sidebarOpen ? t("toolbar.hideSidebar") : t("toolbar.showSidebar")}
             position="right"
@@ -503,9 +524,9 @@ function AppContent() {
         />
 
         {/* Mobile FAB */}
-        <Box className="absolute bottom-6 right-6 z-40 lg:hidden">
+        <Box className="absolute bottom-[max(0.75rem,var(--app-safe-bottom))] right-[max(0.75rem,var(--app-safe-right))] z-40 xl:hidden">
           <ActionIcon
-            size="xl"
+            size={52}
             radius="xl"
             variant="light"
             color="gray"
@@ -520,7 +541,7 @@ function AppContent() {
             onClick={openMobilePanel}
             aria-label={t("helpers.mobilePanel")}
           >
-            <IconAdjustmentsHorizontal size={20} />
+            <IconAdjustmentsHorizontal size={22} />
           </ActionIcon>
         </Box>
       </Box>
@@ -529,10 +550,10 @@ function AppContent() {
       <Drawer
         opened={mobilePanelOpened}
         onClose={closeMobilePanel}
-        title={t("sections.map")}
+        title={t("helpers.mobilePanel")}
         padding="sm"
-        size="min(100vw, 32rem)"
-        hiddenFrom="lg"
+        size="min(100vw, 30rem)"
+        hiddenFrom="xl"
       >
         {sidebar}
       </Drawer>

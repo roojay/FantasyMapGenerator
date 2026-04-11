@@ -488,3 +488,246 @@ impl Dcel {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_new_stores_coordinates() {
+        let p = Point::new(3.0, 4.0);
+        assert_eq!(p.x, 3.0);
+        assert_eq!(p.y, 4.0);
+    }
+
+    #[test]
+    fn point_default_is_zero() {
+        let p = Point::default();
+        assert_eq!(p.x, 0.0);
+        assert_eq!(p.y, 0.0);
+    }
+
+    #[test]
+    fn ref_valid_and_invalid() {
+        let valid = Ref::new(5);
+        assert!(valid.is_valid());
+        assert_eq!(valid.id, 5);
+
+        let invalid = Ref::invalid();
+        assert!(!invalid.is_valid());
+        assert_eq!(invalid.id, -1);
+
+        let zero = Ref::new(0);
+        assert!(zero.is_valid());
+    }
+
+    #[test]
+    fn dcel_create_vertex() {
+        let mut dcel = Dcel::new();
+        let v = dcel.create_vertex(Point::new(1.0, 2.0));
+        assert_eq!(v.id.id, 0);
+        assert_eq!(v.position.x, 1.0);
+        assert_eq!(v.position.y, 2.0);
+        assert_eq!(dcel.vertices.len(), 1);
+    }
+
+    #[test]
+    fn dcel_create_multiple_vertices() {
+        let mut dcel = Dcel::new();
+        let v0 = dcel.create_vertex(Point::new(0.0, 0.0));
+        let v1 = dcel.create_vertex(Point::new(1.0, 0.0));
+        let v2 = dcel.create_vertex(Point::new(0.0, 1.0));
+        assert_eq!(v0.id.id, 0);
+        assert_eq!(v1.id.id, 1);
+        assert_eq!(v2.id.id, 2);
+        assert_eq!(dcel.vertices.len(), 3);
+    }
+
+    #[test]
+    fn dcel_create_half_edge_pairs() {
+        let mut dcel = Dcel::new();
+        let e0 = dcel.create_half_edge();
+        let e1 = dcel.create_half_edge();
+        assert_eq!(e0.id.id, 0);
+        assert_eq!(e1.id.id, 1);
+        assert_eq!(dcel.edges.len(), 2);
+    }
+
+    #[test]
+    fn dcel_create_face() {
+        let mut dcel = Dcel::new();
+        let f = dcel.create_face();
+        assert_eq!(f.id.id, 0);
+        assert_eq!(dcel.faces.len(), 1);
+    }
+
+    #[test]
+    fn dcel_lookup_by_ref() {
+        let mut dcel = Dcel::new();
+        let v = dcel.create_vertex(Point::new(5.0, 7.0));
+        let looked_up = dcel.vertex(v.id);
+        assert_eq!(looked_up.position.x, 5.0);
+        assert_eq!(looked_up.position.y, 7.0);
+    }
+
+    #[test]
+    fn dcel_update_vertex() {
+        let mut dcel = Dcel::new();
+        let mut v = dcel.create_vertex(Point::new(0.0, 0.0));
+        v.position = Point::new(10.0, 20.0);
+        dcel.update_vertex(v);
+        let updated = dcel.vertex(v.id);
+        assert_eq!(updated.position.x, 10.0);
+        assert_eq!(updated.position.y, 20.0);
+    }
+
+    #[test]
+    fn dcel_update_edge_twin_linkage() {
+        let mut dcel = Dcel::new();
+        let mut e0 = dcel.create_half_edge();
+        let mut e1 = dcel.create_half_edge();
+        e0.twin = e1.id;
+        e1.twin = e0.id;
+        dcel.update_edge(e0);
+        dcel.update_edge(e1);
+
+        let twin_of_0 = dcel.twin(dcel.edge(e0.id));
+        assert_eq!(twin_of_0.id, e1.id);
+        let twin_of_1 = dcel.twin(dcel.edge(e1.id));
+        assert_eq!(twin_of_1.id, e0.id);
+    }
+
+    #[test]
+    fn dcel_boundary_edge_detection() {
+        let mut dcel = Dcel::new();
+        let mut e = dcel.create_half_edge();
+        // incident_face defaults to invalid (-1), so it's a boundary edge
+        assert!(dcel.is_boundary(e));
+
+        let f = dcel.create_face();
+        e.incident_face = f.id;
+        dcel.update_edge(e);
+        assert!(!dcel.is_boundary(dcel.edge(e.id)));
+    }
+
+    /// Build a minimal valid triangle DCEL for testing traversal methods.
+    fn build_triangle_dcel() -> Dcel {
+        let mut d = Dcel::new();
+        let v0 = d.create_vertex(Point::new(0.0, 0.0));
+        let v1 = d.create_vertex(Point::new(1.0, 0.0));
+        let v2 = d.create_vertex(Point::new(0.5, 1.0));
+
+        // Inner half-edges (counter-clockwise around face)
+        let mut e01 = d.create_half_edge(); // v0 -> v1
+        let mut e12 = d.create_half_edge(); // v1 -> v2
+        let mut e20 = d.create_half_edge(); // v2 -> v0
+
+        // Outer half-edges (boundary, clockwise)
+        let mut e10 = d.create_half_edge(); // v1 -> v0
+        let mut e21 = d.create_half_edge(); // v2 -> v1
+        let mut e02 = d.create_half_edge(); // v0 -> v2
+
+        let f = d.create_face();
+
+        // Set origins
+        e01.origin = v0.id;
+        e12.origin = v1.id;
+        e20.origin = v2.id;
+        e10.origin = v1.id;
+        e21.origin = v2.id;
+        e02.origin = v0.id;
+
+        // Set twins
+        e01.twin = e10.id;
+        e10.twin = e01.id;
+        e12.twin = e21.id;
+        e21.twin = e12.id;
+        e20.twin = e02.id;
+        e02.twin = e20.id;
+
+        // Set next/prev for inner face
+        e01.next = e12.id;
+        e12.next = e20.id;
+        e20.next = e01.id;
+        e01.prev = e20.id;
+        e12.prev = e01.id;
+        e20.prev = e12.id;
+
+        // Set next/prev for outer boundary
+        e10.next = e02.id;
+        e02.next = e21.id;
+        e21.next = e10.id;
+        e10.prev = e21.id;
+        e02.prev = e10.id;
+        e21.prev = e02.id;
+
+        // Set incident faces (inner edges belong to face, outer are boundary)
+        e01.incident_face = f.id;
+        e12.incident_face = f.id;
+        e20.incident_face = f.id;
+        // outer edges have no face (boundary)
+
+        // Face outer component
+        let mut f_up = f;
+        f_up.outer_component = e01.id;
+        d.update_face(f_up);
+
+        // Vertex incident edges
+        let mut v0_up = v0;
+        v0_up.incident_edge = e01.id;
+        let mut v1_up = v1;
+        v1_up.incident_edge = e12.id;
+        let mut v2_up = v2;
+        v2_up.incident_edge = e20.id;
+        d.update_vertex(v0_up);
+        d.update_vertex(v1_up);
+        d.update_vertex(v2_up);
+
+        d.update_edge(e01);
+        d.update_edge(e12);
+        d.update_edge(e20);
+        d.update_edge(e10);
+        d.update_edge(e21);
+        d.update_edge(e02);
+
+        d
+    }
+
+    #[test]
+    fn triangle_face_has_three_outer_components() {
+        let d = build_triangle_dcel();
+        let f = d.face(Ref::new(0));
+        let edges = d.get_outer_components(&f);
+        assert_eq!(edges.len(), 3);
+    }
+
+    #[test]
+    fn triangle_vertex_incident_edges() {
+        let d = build_triangle_dcel();
+        // v0 should have edges going out from it
+        let v0 = d.vertex(Ref::new(0));
+        let edges = d.get_incident_edges(v0);
+        assert_eq!(edges.len(), 2); // e01 and e02
+    }
+
+    #[test]
+    fn triangle_vertex_incident_faces() {
+        let d = build_triangle_dcel();
+        let v0 = d.vertex(Ref::new(0));
+        let faces = d.get_incident_faces(v0);
+        // v0 touches the single inner face (boundary edges skipped)
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].id.id, 0);
+    }
+
+    #[test]
+    fn half_edge_new_defaults_to_invalid() {
+        let e = HalfEdge::new();
+        assert!(!e.origin.is_valid());
+        assert!(!e.twin.is_valid());
+        assert!(!e.incident_face.is_valid());
+        assert!(!e.next.is_valid());
+        assert!(!e.prev.is_valid());
+        assert!(!e.id.is_valid());
+    }
+}

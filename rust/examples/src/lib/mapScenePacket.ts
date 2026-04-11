@@ -7,6 +7,7 @@ import type {
   PathLayerPacket,
 } from "@/types/map";
 
+const _encoder = new TextEncoder();
 const TERRAIN_ELEVATION_SCALE = 64;
 const WATER_DEPTH_SCALE = 10;
 const OVERLAY_HEIGHT_OFFSET = 1.2;
@@ -447,7 +448,7 @@ function buildExportTerrain(data: MapExportData) {
 }
 
 export function packetTransferables(packet: MapScenePacket): Transferable[] {
-  const transferables: Transferable[] = [
+  const buffers = [
     packet.terrain.positions.buffer,
     packet.terrain.normals.buffer,
     packet.terrain.uvs.buffer,
@@ -471,14 +472,35 @@ export function packetTransferables(packet: MapScenePacket): Transferable[] {
     packet.landPolygonPositions.buffer,
     packet.landPolygonOffsets.buffer,
   ];
+  const transferables: Transferable[] = buffers.filter(
+    (buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer && buffer.byteLength > 0,
+  );
 
-  if (packet.textures.albedo) transferables.push(packet.textures.albedo.buffer);
-  if (packet.textures.terrainAlbedo) transferables.push(packet.textures.terrainAlbedo.buffer);
-  if (packet.textures.roughness) transferables.push(packet.textures.roughness.buffer);
-  if (packet.textures.ao) transferables.push(packet.textures.ao.buffer);
-  if (packet.textures.waterColor) transferables.push(packet.textures.waterColor.buffer);
-  if (packet.textures.waterAlpha) transferables.push(packet.textures.waterAlpha.buffer);
-  if (packet.textures.coastGlow) transferables.push(packet.textures.coastGlow.buffer);
+  if (packet.textures.albedo && packet.textures.albedo.byteLength > 0) {
+    transferables.push(packet.textures.albedo.buffer);
+  }
+  if (packet.textures.terrainAlbedo && packet.textures.terrainAlbedo.byteLength > 0) {
+    transferables.push(packet.textures.terrainAlbedo.buffer);
+  }
+  if (packet.textures.roughness && packet.textures.roughness.byteLength > 0) {
+    transferables.push(packet.textures.roughness.buffer);
+  }
+  if (packet.textures.ao && packet.textures.ao.byteLength > 0) {
+    transferables.push(packet.textures.ao.buffer);
+  }
+  if (packet.textures.waterColor && packet.textures.waterColor.byteLength > 0) {
+    transferables.push(packet.textures.waterColor.buffer);
+  }
+  if (packet.textures.waterAlpha && packet.textures.waterAlpha.byteLength > 0) {
+    transferables.push(packet.textures.waterAlpha.buffer);
+  }
+  if (packet.textures.coastGlow && packet.textures.coastGlow.byteLength > 0) {
+    transferables.push(packet.textures.coastGlow.buffer);
+  }
+
+  if (packet.svgMapJsonBytes && packet.svgMapJsonBytes.byteLength > 0) {
+    transferables.push(packet.svgMapJsonBytes.buffer);
+  }
 
   return transferables;
 }
@@ -494,6 +516,8 @@ export function scenePacketFromWasm(
     draw_scale: number;
     terrain_width: number;
     terrain_height: number;
+    texture_width: number;
+    texture_height: number;
     elevation_scale: number;
     city_count: number;
     town_count: number;
@@ -508,6 +532,8 @@ export function scenePacketFromWasm(
     drawScale: rawMetadata.draw_scale,
     terrainWidth: rawMetadata.terrain_width,
     terrainHeight: rawMetadata.terrain_height,
+    textureWidth: rawMetadata.texture_width ?? rawMetadata.terrain_width,
+    textureHeight: rawMetadata.texture_height ?? rawMetadata.terrain_height,
     elevationScale: rawMetadata.elevation_scale,
     cityCount: rawMetadata.city_count,
     townCount: rawMetadata.town_count,
@@ -563,7 +589,7 @@ export function scenePacketFromWasm(
     },
     landPolygonPositions: wire.landPolygonPositions,
     landPolygonOffsets: wire.landPolygonOffsets,
-    svgMapJson: wire.svgJson,
+    svgMapJsonBytes: _encoder.encode(wire.svgJson),
     generatedFrom,
   };
 }
@@ -577,6 +603,8 @@ export function compileMapExportData(data: MapExportData, mapJson?: string): Map
     drawScale: data.draw_scale,
     terrainWidth: terrainBundle.terrainWidth,
     terrainHeight: terrainBundle.terrainHeight,
+    textureWidth: terrainBundle.terrainWidth,
+    textureHeight: terrainBundle.terrainHeight,
     elevationScale: TERRAIN_ELEVATION_SCALE,
     cityCount: data.city.length / 2,
     townCount: data.town.length / 2,
@@ -654,7 +682,7 @@ export function compileMapExportData(data: MapExportData, mapJson?: string): Map
     landPolygonPositions: landPolygonBuffers.positions,
     landPolygonOffsets: landPolygonBuffers.offsets,
     mapJson: mapJson ?? JSON.stringify(data),
-    svgMapJson: JSON.stringify(createSvgMapExportData(data)),
+    svgMapJsonBytes: _encoder.encode(JSON.stringify(createSvgMapExportData(data))),
   };
 }
 

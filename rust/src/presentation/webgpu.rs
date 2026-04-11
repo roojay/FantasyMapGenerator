@@ -9,6 +9,10 @@ const TERRAIN_ELEVATION_SCALE: f32 = 64.0;
 const WATER_DEPTH_SCALE: f32 = 10.0;
 const OVERLAY_HEIGHT_OFFSET: f32 = 1.2;
 const LABEL_HEIGHT_OFFSET: f32 = 2.4;
+const INTERACTIVE_TERRAIN_MAX_DIMENSION: u32 = 1024;
+const INTERACTIVE_TERRAIN_MAX_TEXELS: u32 = 1_000_000;
+const INTERACTIVE_TEXTURE_MAX_DIMENSION: u32 = 2048;
+const INTERACTIVE_TEXTURE_MAX_TEXELS: u32 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WebGpuSceneMetadata {
@@ -17,6 +21,8 @@ pub struct WebGpuSceneMetadata {
     pub draw_scale: f64,
     pub terrain_width: u32,
     pub terrain_height: u32,
+    pub texture_width: u32,
+    pub texture_height: u32,
     pub elevation_scale: f32,
     pub city_count: u32,
     pub town_count: u32,
@@ -113,18 +119,62 @@ pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePa
         return Err("heightmap and land_mask dimensions must match".to_string());
     }
 
-    let terrain_width = heightmap.width;
-    let terrain_height = heightmap.height;
+    let source_terrain_width = heightmap.width;
+    let source_terrain_height = heightmap.height;
     let flux_map = map_data.flux_map.as_ref();
 
-    let top_down_height = to_top_down_f32(&heightmap.data, terrain_width, terrain_height);
-    let top_down_land = to_top_down_u8(&land_mask.data, terrain_width, terrain_height);
+    let top_down_height = to_top_down_f32(
+        &heightmap.data,
+        source_terrain_width,
+        source_terrain_height,
+    );
+    let top_down_land = to_top_down_u8(
+        &land_mask.data,
+        source_terrain_width,
+        source_terrain_height,
+    );
     let top_down_flux = flux_map
         .map(|flux| to_top_down_f32(&flux.data, flux.width, flux.height))
-        .unwrap_or_else(|| vec![0.0; (terrain_width * terrain_height) as usize]);
+        .unwrap_or_else(|| vec![0.0; (source_terrain_width * source_terrain_height) as usize]);
+
+    // Mesh resolution: capped for geometry budget
+    let (terrain_width, terrain_height) =
+        clamp_interactive_terrain_size(source_terrain_width, source_terrain_height);
+
+    // Texture resolution: higher cap for visual quality at 4K/8K
+    let (texture_width, texture_height) =
+        clamp_interactive_texture_size(source_terrain_width, source_terrain_height);
+
+    // --- Mesh-resolution data (for geometry + elevation sampling) ---
+    let mesh_height = if terrain_width == source_terrain_width
+        && terrain_height == source_terrain_height
+    {
+        top_down_height.clone()
+    } else {
+        resample_scalar_grid(
+            &top_down_height,
+            source_terrain_width,
+            source_terrain_height,
+            terrain_width,
+            terrain_height,
+        )
+    };
+    let mesh_land = if terrain_width == source_terrain_width
+        && terrain_height == source_terrain_height
+    {
+        top_down_land.clone()
+    } else {
+        resample_mask_grid(
+            &top_down_land,
+            source_terrain_width,
+            source_terrain_height,
+            terrain_width,
+            terrain_height,
+        )
+    };
     let elevations = build_elevation_field(
-        &top_down_height,
-        &top_down_land,
+        &mesh_height,
+        &mesh_land,
         terrain_width,
         terrain_height,
     );
@@ -137,15 +187,56 @@ pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePa
         &elevations,
     );
 
-    let height_texture = encode_scalar_texture(&top_down_height, terrain_width, terrain_height);
-    let land_mask_texture = encode_mask_texture(&top_down_land, terrain_width, terrain_height);
-    let flux_texture = encode_scalar_texture(&top_down_flux, terrain_width, terrain_height);
+    // --- Texture-resolution data (for visual detail) ---
+    let tex_height = if texture_width == source_terrain_width
+        && texture_height == source_terrain_height
+    {
+        top_down_height
+    } else {
+        resample_scalar_grid(
+            &top_down_height,
+            source_terrain_width,
+            source_terrain_height,
+            texture_width,
+            texture_height,
+        )
+    };
+    let tex_land = if texture_width == source_terrain_width
+        && texture_height == source_terrain_height
+    {
+        top_down_land
+    } else {
+        resample_mask_grid(
+            &top_down_land,
+            source_terrain_width,
+            source_terrain_height,
+            texture_width,
+            texture_height,
+        )
+    };
+    let tex_flux = if texture_width == source_terrain_width
+        && texture_height == source_terrain_height
+    {
+        top_down_flux
+    } else {
+        resample_scalar_grid(
+            &top_down_flux,
+            source_terrain_width,
+            source_terrain_height,
+            texture_width,
+            texture_height,
+        )
+    };
+
+    let height_texture = encode_scalar_texture(&tex_height, texture_width, texture_height);
+    let land_mask_texture = encode_mask_texture(&tex_land, texture_width, texture_height);
+    let flux_texture = encode_scalar_texture(&tex_flux, texture_width, texture_height);
     let surface_textures = build_surface_texture_pack(
         &height_texture,
         &flux_texture,
         &land_mask_texture,
-        terrain_width,
-        terrain_height,
+        texture_width,
+        texture_height,
     );
 
     let metadata = WebGpuSceneMetadata {
@@ -154,6 +245,8 @@ pub fn build_webgpu_scene_packet(map_data: &MapDrawData) -> Result<WebGpuScenePa
         draw_scale: map_data.draw_scale,
         terrain_width,
         terrain_height,
+        texture_width,
+        texture_height,
         elevation_scale: TERRAIN_ELEVATION_SCALE,
         city_count: (map_data.city.len() / 2) as u32,
         town_count: (map_data.town.len() / 2) as u32,
@@ -280,6 +373,152 @@ fn to_top_down_u8(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     output
 }
 
+fn clamp_interactive_terrain_size(width: u32, height: u32) -> (u32, u32) {
+    if width == 0 || height == 0 {
+        return (width.max(1), height.max(1));
+    }
+
+    let texel_count = u64::from(width) * u64::from(height);
+    if width <= INTERACTIVE_TERRAIN_MAX_DIMENSION
+        && height <= INTERACTIVE_TERRAIN_MAX_DIMENSION
+        && texel_count <= u64::from(INTERACTIVE_TERRAIN_MAX_TEXELS)
+    {
+        return (width, height);
+    }
+
+    let dimension_scale = f64::min(
+        INTERACTIVE_TERRAIN_MAX_DIMENSION as f64 / width as f64,
+        INTERACTIVE_TERRAIN_MAX_DIMENSION as f64 / height as f64,
+    );
+    let texel_scale =
+        (INTERACTIVE_TERRAIN_MAX_TEXELS as f64 / texel_count as f64).sqrt();
+    let scale = dimension_scale.min(texel_scale).min(1.0);
+
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
+}
+
+fn clamp_interactive_texture_size(width: u32, height: u32) -> (u32, u32) {
+    if width == 0 || height == 0 {
+        return (width.max(1), height.max(1));
+    }
+
+    let texel_count = u64::from(width) * u64::from(height);
+    if width <= INTERACTIVE_TEXTURE_MAX_DIMENSION
+        && height <= INTERACTIVE_TEXTURE_MAX_DIMENSION
+        && texel_count <= u64::from(INTERACTIVE_TEXTURE_MAX_TEXELS)
+    {
+        return (width, height);
+    }
+
+    let dimension_scale = f64::min(
+        INTERACTIVE_TEXTURE_MAX_DIMENSION as f64 / width as f64,
+        INTERACTIVE_TEXTURE_MAX_DIMENSION as f64 / height as f64,
+    );
+    let texel_scale =
+        (INTERACTIVE_TEXTURE_MAX_TEXELS as f64 / texel_count as f64).sqrt();
+    let scale = dimension_scale.min(texel_scale).min(1.0);
+
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
+}
+
+fn sample_scalar_grid(data: &[f32], width: u32, height: u32, x: f32, y: f32) -> f32 {
+    let width = width.max(1);
+    let height = height.max(1);
+    let sample_x = x.clamp(0.0, (width - 1) as f32);
+    let sample_y = y.clamp(0.0, (height - 1) as f32);
+
+    let x0 = sample_x.floor() as i32;
+    let y0 = sample_y.floor() as i32;
+    let x1 = (x0 + 1).min(width.saturating_sub(1) as i32);
+    let y1 = (y0 + 1).min(height.saturating_sub(1) as i32);
+    let tx = sample_x - x0 as f32;
+    let ty = sample_y - y0 as f32;
+
+    let h00 = sample_grid(data, width, height, x0, y0);
+    let h10 = sample_grid(data, width, height, x1, y0);
+    let h01 = sample_grid(data, width, height, x0, y1);
+    let h11 = sample_grid(data, width, height, x1, y1);
+    let hx0 = h00 + (h10 - h00) * tx;
+    let hx1 = h01 + (h11 - h01) * tx;
+    hx0 + (hx1 - hx0) * ty
+}
+
+fn resample_scalar_grid(
+    data: &[f32],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<f32> {
+    let mut output = vec![0.0; (target_width * target_height) as usize];
+
+    for y in 0..target_height {
+        let sample_y = if target_height > 1 {
+            y as f32 * (source_height.saturating_sub(1)) as f32
+                / (target_height.saturating_sub(1)) as f32
+        } else {
+            0.0
+        };
+
+        for x in 0..target_width {
+            let sample_x = if target_width > 1 {
+                x as f32 * (source_width.saturating_sub(1)) as f32
+                    / (target_width.saturating_sub(1)) as f32
+            } else {
+                0.0
+            };
+
+            output[(y * target_width + x) as usize] =
+                sample_scalar_grid(data, source_width, source_height, sample_x, sample_y);
+        }
+    }
+
+    output
+}
+
+fn resample_mask_grid(
+    data: &[u8],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<u8> {
+    let mut output = vec![0; (target_width * target_height) as usize];
+
+    for y in 0..target_height {
+        let sample_y = if target_height > 1 {
+            ((y as f32 * (source_height.saturating_sub(1)) as f32)
+                / (target_height.saturating_sub(1)) as f32)
+                .round() as i32
+        } else {
+            0
+        };
+
+        for x in 0..target_width {
+            let sample_x = if target_width > 1 {
+                ((x as f32 * (source_width.saturating_sub(1)) as f32)
+                    / (target_width.saturating_sub(1)) as f32)
+                    .round() as i32
+            } else {
+                0
+            };
+
+            let clamped_x = sample_x.clamp(0, source_width.saturating_sub(1) as i32) as usize;
+            let clamped_y = sample_y.clamp(0, source_height.saturating_sub(1) as i32) as usize;
+            output[(y * target_width + x) as usize] =
+                data[clamped_y * source_width as usize + clamped_x];
+        }
+    }
+
+    output
+}
+
 fn build_elevation_field(height: &[f32], land: &[u8], width: u32, height_px: u32) -> Vec<f32> {
     let mut elevations = vec![0.0; (width * height_px) as usize];
     for y in 0..height_px as usize {
@@ -391,22 +630,17 @@ fn terrain_elevation(height: f32, is_land: bool) -> f32 {
     }
 }
 
-fn encode_scalar_texture(data: &[f32], width: u32, height: u32) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height * 4) as usize);
-    for value in data {
-        let encoded = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-        texture.extend_from_slice(&[encoded, encoded, encoded, 255]);
-    }
-    texture
+fn encode_scalar_texture(data: &[f32], _width: u32, _height: u32) -> Vec<u8> {
+    // PERF: Single-channel R8 encoding — 4× smaller than the previous RGBA path.
+    // The JS side creates a Three.js DataTexture with `RedFormat` to match.
+    data.iter()
+        .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect()
 }
 
-fn encode_mask_texture(data: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height * 4) as usize);
-    for value in data {
-        let encoded = if *value > 0 { 255 } else { 0 };
-        texture.extend_from_slice(&[encoded, encoded, encoded, 255]);
-    }
-    texture
+fn encode_mask_texture(data: &[u8], _width: u32, _height: u32) -> Vec<u8> {
+    // PERF: Single-channel R8 encoding — 4× smaller than the previous RGBA path.
+    data.iter().map(|v| if *v > 0 { 255 } else { 0 }).collect()
 }
 
 struct SurfaceTexturePack {
@@ -427,15 +661,18 @@ fn build_surface_texture_pack(
 ) -> SurfaceTexturePack {
     let pixel_count = (width * height) as usize;
     let mut terrain_albedo = vec![0u8; pixel_count * 4];
-    let mut roughness = vec![0u8; pixel_count * 4];
-    let mut ao = vec![0u8; pixel_count * 4];
+    // PERF: Scalar textures use single-channel R8 (1 byte/pixel) instead of
+    // RGBA (4 bytes/pixel). For 1024×1024 terrain this saves ~15 MB.
+    let mut roughness = vec![0u8; pixel_count];
+    let mut ao = vec![0u8; pixel_count];
     let mut water_color = vec![0u8; pixel_count * 4];
-    let mut water_alpha = vec![0u8; pixel_count * 4];
-    let mut coast_glow = vec![0u8; pixel_count * 4];
+    let mut water_alpha = vec![0u8; pixel_count];
+    let mut coast_glow = vec![0u8; pixel_count];
 
     for y in 0..height as i32 {
         for x in 0..width as i32 {
-            let idx = pixel_offset_rgba(width, x as usize, y as usize);
+            let rgba_idx = pixel_offset_rgba(width, x as usize, y as usize);
+            let r8_idx = (y as usize) * (width as usize) + (x as usize);
             let u = if width > 1 {
                 x as f32 / (width - 1) as f32
             } else {
@@ -447,15 +684,15 @@ fn build_surface_texture_pack(
                 0.0
             };
             let height_value =
-                sample_texture_channel_rgba(height_texture, width, height, x, y).clamp(0.0, 1.0);
+                sample_texture_channel_r8(height_texture, width, height, x, y).clamp(0.0, 1.0);
             let flux_value =
-                sample_texture_channel_rgba(flux_texture, width, height, x, y).clamp(0.0, 1.0);
-            let is_land = sample_mask_rgba(land_mask_texture, width, height, x, y);
-            let coast = coastal_strength_rgba(land_mask_texture, width, height, x, y);
-            let left = sample_texture_channel_rgba(height_texture, width, height, x - 1, y);
-            let right = sample_texture_channel_rgba(height_texture, width, height, x + 1, y);
-            let up = sample_texture_channel_rgba(height_texture, width, height, x, y - 1);
-            let down = sample_texture_channel_rgba(height_texture, width, height, x, y + 1);
+                sample_texture_channel_r8(flux_texture, width, height, x, y).clamp(0.0, 1.0);
+            let is_land = sample_mask_r8(land_mask_texture, width, height, x, y);
+            let coast = coastal_strength_r8(land_mask_texture, width, height, x, y);
+            let left = sample_texture_channel_r8(height_texture, width, height, x - 1, y);
+            let right = sample_texture_channel_r8(height_texture, width, height, x + 1, y);
+            let up = sample_texture_channel_r8(height_texture, width, height, x, y - 1);
+            let down = sample_texture_channel_r8(height_texture, width, height, x, y + 1);
             let relief = clamp01(((right - left).abs() + (down - up).abs()) * 3.4);
             let slope_dx = right - left;
             let slope_dy = down - up;
@@ -581,20 +818,10 @@ fn build_surface_texture_pack(
                 clamp01(0.96 - coast * 0.08)
             };
 
-            write_rgba(&mut terrain_albedo, idx, color[0], color[1], color[2], 255);
+            write_rgba(&mut terrain_albedo, rgba_idx, color[0], color[1], color[2], 255);
 
-            let roughness_encoded = (roughness_value * 255.0).round() as u8;
-            write_rgba(
-                &mut roughness,
-                idx,
-                roughness_encoded,
-                roughness_encoded,
-                roughness_encoded,
-                255,
-            );
-
-            let ao_encoded = (ao_value * 255.0).round() as u8;
-            write_rgba(&mut ao, idx, ao_encoded, ao_encoded, ao_encoded, 255);
+            roughness[r8_idx] = (roughness_value * 255.0).round() as u8;
+            ao[r8_idx] = (ao_value * 255.0).round() as u8;
 
             let water_depth = clamp01(1.0 - height_value);
             let shallow_mix = clamp01(1.0 - water_depth * 1.28);
@@ -617,32 +844,15 @@ fn build_surface_texture_pack(
 
             write_rgba(
                 &mut water_color,
-                idx,
+                rgba_idx,
                 water_tint[0],
                 water_tint[1],
                 water_tint[2],
                 255,
             );
 
-            let water_alpha_encoded = (water_opacity * 255.0).round() as u8;
-            write_rgba(
-                &mut water_alpha,
-                idx,
-                water_alpha_encoded,
-                water_alpha_encoded,
-                water_alpha_encoded,
-                255,
-            );
-
-            let glow_encoded = (glow_opacity * 255.0).round() as u8;
-            write_rgba(
-                &mut coast_glow,
-                idx,
-                glow_encoded,
-                glow_encoded,
-                glow_encoded,
-                255,
-            );
+            water_alpha[r8_idx] = (water_opacity * 255.0).round() as u8;
+            coast_glow[r8_idx] = (glow_opacity * 255.0).round() as u8;
         }
     }
 
@@ -667,19 +877,21 @@ fn write_rgba(texture: &mut [u8], offset: usize, r: u8, g: u8, b: u8, a: u8) {
     texture[offset + 3] = a;
 }
 
-fn sample_texture_channel_rgba(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
+// --- R8 (single-channel) texture sampling ---------------------------------
+
+fn sample_texture_channel_r8(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
     let clamped_x = x.clamp(0, width.saturating_sub(1) as i32) as usize;
     let clamped_y = y.clamp(0, height.saturating_sub(1) as i32) as usize;
-    let idx = pixel_offset_rgba(width, clamped_x, clamped_y);
+    let idx = clamped_y * width as usize + clamped_x;
     texture[idx] as f32 / 255.0
 }
 
-fn sample_mask_rgba(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> bool {
-    sample_texture_channel_rgba(texture, width, height, x, y) > 0.5
+fn sample_mask_r8(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> bool {
+    sample_texture_channel_r8(texture, width, height, x, y) > 0.5
 }
 
-fn coastal_strength_rgba(mask: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
-    let center: f32 = if sample_mask_rgba(mask, width, height, x, y) {
+fn coastal_strength_r8(mask: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
+    let center: f32 = if sample_mask_r8(mask, width, height, x, y) {
         1.0
     } else {
         0.0
@@ -690,7 +902,7 @@ fn coastal_strength_rgba(mask: &[u8], width: u32, height: u32, x: i32, y: i32) -
             if ox == 0 && oy == 0 {
                 continue;
             }
-            let sample: f32 = if sample_mask_rgba(mask, width, height, x + ox, y + oy) {
+            let sample: f32 = if sample_mask_r8(mask, width, height, x + ox, y + oy) {
                 1.0
             } else {
                 0.0
@@ -1022,4 +1234,34 @@ fn sample_elevation(
     let hx0 = h00 + (h10 - h00) * tx;
     let hx1 = h01 + (h11 - h01) * tx;
     hx0 + (hx1 - hx0) * ty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_interactive_terrain_size, resample_scalar_grid};
+
+    #[test]
+    fn keeps_small_interactive_terrain_size_unchanged() {
+        assert_eq!(clamp_interactive_terrain_size(960, 540), (960, 540));
+    }
+
+    #[test]
+    fn clamps_large_interactive_terrain_size() {
+        let (width, height) = clamp_interactive_terrain_size(1920, 1080);
+        assert!(width < 1920);
+        assert!(height < 1080);
+        assert!(width <= 1024);
+        assert!(height <= 1024);
+        assert!(u64::from(width) * u64::from(height) <= 1_000_000);
+    }
+
+    #[test]
+    fn resamples_scalar_grid_to_target_size() {
+        let source = vec![0.0, 1.0, 2.0, 3.0];
+        let sampled = resample_scalar_grid(&source, 2, 2, 4, 4);
+
+        assert_eq!(sampled.len(), 16);
+        assert!((sampled[0] - 0.0).abs() < 1e-6);
+        assert!((sampled[15] - 3.0).abs() < 1e-6);
+    }
 }

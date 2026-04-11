@@ -48,6 +48,8 @@ export interface MapSceneMetadata {
   drawScale: number;
   terrainWidth: number;
   terrainHeight: number;
+  textureWidth: number;
+  textureHeight: number;
   elevationScale: number;
   cityCount: number;
   townCount: number;
@@ -101,8 +103,21 @@ export interface MapScenePacket {
   landPolygonPositions: Float32Array;
   landPolygonOffsets: Uint32Array;
   mapJson?: string;
-  svgMapJson: string;
+  /** UTF-8 encoded SVG map JSON — transferable as ArrayBuffer. */
+  svgMapJsonBytes: Uint8Array;
+  /** Lazily decoded from svgMapJsonBytes. Use getSvgMapJson() helper. */
+  svgMapJson?: string;
   generatedFrom?: GeneratedMapSource;
+}
+
+const _decoder = new TextDecoder();
+
+/** Lazily decode svgMapJsonBytes to string, caching the result on the packet. */
+export function getSvgMapJson(packet: MapScenePacket): string | undefined {
+  if (packet.svgMapJson != null) return packet.svgMapJson;
+  if (packet.svgMapJsonBytes.byteLength === 0) return undefined;
+  packet.svgMapJson = _decoder.decode(packet.svgMapJsonBytes);
+  return packet.svgMapJson;
 }
 
 export interface MapLayers {

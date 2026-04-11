@@ -75,3 +75,64 @@ impl Extents2d {
         x >= self.minx && x < self.maxx && y >= self.miny && y < self.maxy
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_stores_bounds() {
+        let e = Extents2d::new(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(e.minx, 1.0);
+        assert_eq!(e.miny, 2.0);
+        assert_eq!(e.maxx, 3.0);
+        assert_eq!(e.maxy, 4.0);
+    }
+
+    #[test]
+    fn contains_point_interior() {
+        let e = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        assert!(e.contains_point(Point::new(5.0, 5.0)));
+    }
+
+    #[test]
+    fn contains_point_on_min_boundary_inclusive() {
+        let e = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        assert!(e.contains_point(Point::new(0.0, 0.0)));
+    }
+
+    #[test]
+    fn contains_point_on_max_boundary_exclusive() {
+        let e = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        assert!(!e.contains_point(Point::new(10.0, 5.0)));
+        assert!(!e.contains_point(Point::new(5.0, 10.0)));
+    }
+
+    #[test]
+    fn contains_point_outside() {
+        let e = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        assert!(!e.contains_point(Point::new(-1.0, 5.0)));
+        assert!(!e.contains_point(Point::new(5.0, -1.0)));
+        assert!(!e.contains_point(Point::new(11.0, 5.0)));
+        assert!(!e.contains_point(Point::new(5.0, 11.0)));
+    }
+
+    #[test]
+    fn contains_xy_matches_contains_point() {
+        let e = Extents2d::new(1.0, 2.0, 3.0, 4.0);
+        let cases = [(2.0, 3.0, true), (0.0, 3.0, false), (3.0, 3.0, false)];
+        for (x, y, expected) in cases {
+            assert_eq!(e.contains_xy(x, y), expected, "({x}, {y})");
+            assert_eq!(e.contains_point(Point::new(x, y)), expected, "({x}, {y}) point");
+        }
+    }
+
+    #[test]
+    fn default_is_zero_area() {
+        let e = Extents2d::default();
+        assert_eq!(e.minx, 0.0);
+        assert_eq!(e.miny, 0.0);
+        assert_eq!(e.maxx, 0.0);
+        assert_eq!(e.maxy, 0.0);
+    }
+}

@@ -45,6 +45,76 @@ use crate::data_structures::geometry::{line_intersection, line_segment_intersect
 /// # 参考来源
 /// - M. Berg, "Computational geometry", Chapter 9
 /// - 原始 C++ 实现: src/delaunay.cpp, triangulate()
+/// Compute a Hilbert curve index for a point mapped to a grid.
+/// Sorts points along a space-filling curve so that consecutive points
+/// in the sorted order are spatially nearby, which dramatically reduces
+/// the walking distance in the incremental insertion algorithm.
+fn hilbert_index(x: u32, y: u32, order: u32) -> u64 {
+    let mut rx: u32;
+    let mut ry: u32;
+    let mut d: u64 = 0;
+    let mut x = x;
+    let mut y = y;
+    let mut s = order / 2;
+    while s > 0 {
+        rx = if (x & s) > 0 { 1 } else { 0 };
+        ry = if (y & s) > 0 { 1 } else { 0 };
+        d += (s as u64 * s as u64) * ((3 * rx) ^ ry) as u64;
+        // Rotate quadrant
+        if ry == 0 {
+            if rx == 1 {
+                x = s.wrapping_mul(2).wrapping_sub(1).wrapping_sub(x);
+                y = s.wrapping_mul(2).wrapping_sub(1).wrapping_sub(y);
+            }
+            std::mem::swap(&mut x, &mut y);
+        }
+        s /= 2;
+    }
+    d
+}
+
+/// Sort points along a Hilbert curve to improve spatial locality
+/// for the incremental insertion algorithm. Both the walking algorithm
+/// and CPU cache benefit from processing spatially nearby points consecutively.
+fn hilbert_sort(points: &mut [Point]) {
+    if points.len() < 2 {
+        return;
+    }
+    // Compute bounding box
+    let mut minx = points[0].x;
+    let mut miny = points[0].y;
+    let mut maxx = minx;
+    let mut maxy = miny;
+    for p in points.iter() {
+        if p.x < minx { minx = p.x; }
+        if p.y < miny { miny = p.y; }
+        if p.x > maxx { maxx = p.x; }
+        if p.y > maxy { maxy = p.y; }
+    }
+    let dx = maxx - minx;
+    let dy = maxy - miny;
+    if dx < 1e-12 && dy < 1e-12 {
+        return;
+    }
+
+    // Use a 2^10 = 1024 grid for the Hilbert curve
+    let order: u32 = 1024;
+    let scale_x = if dx > 1e-12 { (order - 1) as f64 / dx } else { 0.0 };
+    let scale_y = if dy > 1e-12 { (order - 1) as f64 / dy } else { 0.0 };
+
+    // Pre-compute Hilbert indices and sort by them
+    let mut indexed: Vec<(u64, Point)> = points.iter().map(|p| {
+        let gx = ((p.x - minx) * scale_x) as u32;
+        let gy = ((p.y - miny) * scale_y) as u32;
+        (hilbert_index(gx, gy, order), *p)
+    }).collect();
+    indexed.sort_unstable_by_key(|&(d, _)| d);
+
+    for (i, (_, p)) in indexed.into_iter().enumerate() {
+        points[i] = p;
+    }
+}
+
 pub fn triangulate(points: &mut Vec<Point>) -> Dcel {
     if points.is_empty() {
         return Dcel::new();
@@ -56,12 +126,22 @@ pub fn triangulate(points: &mut Vec<Point>) -> Dcel {
     let mut t = init_triangulation(points);
 
     // ===================================
+    // 1.5 Sort points along Hilbert curve for spatial locality
+    // ===================================
+    hilbert_sort(points);
+
+    // ===================================
     // 2. 增量插入点
     // ===================================
+    // Track the last successfully located face to use as starting hint
+    // for the walking algorithm. This dramatically reduces walking steps 
+    // when consecutive points are spatially nearby.
+    let mut last_face = Ref::new(0);
     while let Some(p) = points.pop() {
-        // 定位点所在的三角形
-        let f = locate_triangle_at_point(p, &t);
+        // 定位点所在的三角形 (starting walk from last known face)
+        let f = locate_triangle_at_point(p, &t, last_face);
         if f.id.is_valid() {
+            last_face = f.id;
             // 将点插入三角剖分，并维护 Delaunay 性质
             insert_point_into_triangulation(p, f, &mut t);
         }
@@ -336,13 +416,18 @@ fn is_segment_intersecting_edge(p0: Point, p1: Point, h: HalfEdge, t: &Dcel) -> 
 ///
 /// # 参考来源
 /// - 原始 C++ 实现: src/delaunay.cpp, locateTriangleAtPoint()
-fn locate_triangle_at_point(p: Point, t: &Dcel) -> Face {
+fn locate_triangle_at_point(p: Point, t: &Dcel, start_hint: Ref) -> Face {
     if t.faces.is_empty() {
         return Face::new();
     }
 
-    // 从第一个面开始
-    let mut f = t.face(Ref::new(0));
+    // Start from the hint face if valid, otherwise face 0
+    let start = if start_hint.is_valid() && (start_hint.id as usize) < t.faces.len() {
+        start_hint
+    } else {
+        Ref::new(0)
+    };
+    let mut f = t.face(start);
 
     // 最大迭代次数：与三角形数量的平方根成正比
     let max_count = (2.0 * (t.faces.len() as f64).sqrt()) as i32;
@@ -1081,4 +1166,125 @@ fn cleanup(t: &mut Dcel) {
     t.vertices = new_verts;
     t.edges = new_edges;
     t.faces = new_faces;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data_structures::dcel::Point;
+
+    fn make_square_points() -> Vec<Point> {
+        vec![
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 0.0),
+            Point::new(1.0, 1.0),
+            Point::new(0.0, 1.0),
+        ]
+    }
+
+    #[test]
+    fn triangulate_four_points_produces_valid_dcel() {
+        let mut pts = make_square_points();
+        let dcel = triangulate(&mut pts);
+        assert!(!dcel.vertices.is_empty(), "should have vertices");
+        assert!(!dcel.edges.is_empty(), "should have edges");
+        assert!(!dcel.faces.is_empty(), "should have faces");
+    }
+
+    #[test]
+    fn triangulate_four_points_has_four_vertices() {
+        let mut pts = make_square_points();
+        let dcel = triangulate(&mut pts);
+        assert_eq!(dcel.vertices.len(), 4);
+    }
+
+    #[test]
+    fn triangulate_four_points_has_two_faces() {
+        let mut pts = make_square_points();
+        let dcel = triangulate(&mut pts);
+        assert_eq!(dcel.faces.len(), 2, "square should produce 2 triangles");
+    }
+
+    #[test]
+    fn triangulate_reasonable_topology() {
+        let mut pts = make_square_points();
+        let dcel = triangulate(&mut pts);
+        let v = dcel.vertices.len();
+        let f = dcel.faces.len();
+        let he = dcel.edges.len();
+        // Basic sanity: V >= 4, F >= 2, half-edges > 0
+        assert!(v >= 4, "vertices: {}", v);
+        assert!(f >= 2, "faces: {}", f);
+        assert!(he > 0, "edges: {}", he);
+    }
+
+    #[test]
+    fn triangulate_collinear_points() {
+        let mut pts = vec![
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 0.0),
+            Point::new(2.0, 0.0),
+        ];
+        let dcel = triangulate(&mut pts);
+        // Collinear points may produce degenerate or zero triangles,
+        // but should not crash
+        assert!(dcel.vertices.len() <= 3);
+    }
+
+    #[test]
+    fn triangulate_many_points() {
+        let mut pts: Vec<Point> = (0..100)
+            .map(|i| {
+                let angle = (i as f64) * 2.0 * std::f64::consts::PI / 100.0;
+                Point::new(angle.cos(), angle.sin())
+            })
+            .collect();
+        let dcel = triangulate(&mut pts);
+        // After cleanup, some boundary vertices may be removed along with super-triangle
+        // Just verify we get a reasonable triangulation
+        assert!(
+            dcel.vertices.len() >= 50,
+            "should keep most vertices: got {}",
+            dcel.vertices.len()
+        );
+        assert!(
+            dcel.faces.len() >= 50,
+            "should have many faces: got {}",
+            dcel.faces.len()
+        );
+    }
+
+    #[test]
+    fn triangulate_internal_edges_have_valid_twin() {
+        // After cleanup, boundary edges may have invalid twins.
+        // Check that internal edges (those with valid twin) are properly paired.
+        let mut pts = make_square_points();
+        let dcel = triangulate(&mut pts);
+        for edge in &dcel.edges {
+            if edge.twin.is_valid() {
+                let twin = dcel.edge(edge.twin);
+                assert_eq!(twin.twin, edge.id, "twin.twin should point back for edge {}", edge.id.id);
+            }
+        }
+    }
+
+    #[test]
+    fn triangulate_empty_returns_empty_dcel() {
+        let mut pts = Vec::new();
+        let dcel = triangulate(&mut pts);
+        assert!(dcel.vertices.is_empty());
+        assert!(dcel.edges.is_empty());
+        assert!(dcel.faces.is_empty());
+    }
+
+    #[test]
+    fn triangulate_is_deterministic() {
+        let mut pts1 = make_square_points();
+        let dcel1 = triangulate(&mut pts1);
+        let mut pts2 = make_square_points();
+        let dcel2 = triangulate(&mut pts2);
+        assert_eq!(dcel1.vertices.len(), dcel2.vertices.len());
+        assert_eq!(dcel1.edges.len(), dcel2.edges.len());
+        assert_eq!(dcel1.faces.len(), dcel2.faces.len());
+    }
 }

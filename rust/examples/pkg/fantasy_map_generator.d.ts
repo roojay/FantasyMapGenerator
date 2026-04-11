@@ -67,13 +67,11 @@ export class WasmRenderPacket {
     coast_glow_texture(): Uint8Array;
     contour_offsets(): Uint32Array;
     contour_positions(): Float32Array;
-    flux_texture(): Uint8Array;
     height_texture(): Uint8Array;
     label_anchors(): Float32Array;
     label_bytes(): Uint8Array;
     label_offsets(): Uint32Array;
     label_sizes(): Float32Array;
-    land_mask_texture(): Uint8Array;
     land_polygon_offsets(): Uint32Array;
     land_polygon_positions(): Float32Array;
     river_offsets(): Uint32Array;
@@ -135,13 +133,11 @@ export interface InitOutput {
     readonly wasmrenderpacket_coast_glow_texture: (a: number) => [number, number];
     readonly wasmrenderpacket_contour_offsets: (a: number) => [number, number];
     readonly wasmrenderpacket_contour_positions: (a: number) => [number, number];
-    readonly wasmrenderpacket_flux_texture: (a: number) => [number, number];
     readonly wasmrenderpacket_height_texture: (a: number) => [number, number];
     readonly wasmrenderpacket_label_anchors: (a: number) => [number, number];
     readonly wasmrenderpacket_label_bytes: (a: number) => [number, number];
     readonly wasmrenderpacket_label_offsets: (a: number) => [number, number];
     readonly wasmrenderpacket_label_sizes: (a: number) => [number, number];
-    readonly wasmrenderpacket_land_mask_texture: (a: number) => [number, number];
     readonly wasmrenderpacket_land_polygon_offsets: (a: number) => [number, number];
     readonly wasmrenderpacket_land_polygon_positions: (a: number) => [number, number];
     readonly wasmrenderpacket_metadata_json: (a: number) => [number, number];

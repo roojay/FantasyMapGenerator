@@ -279,3 +279,95 @@ pub fn generate_samples(rng: &mut GlibcRand, bounds: Extents2d, r: f64, k: usize
 
     points
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::rand::GlibcRand;
+
+    #[test]
+    fn generates_nonempty_samples() {
+        let mut rng = GlibcRand::new(42);
+        let bounds = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        let samples = generate_samples(&mut rng, bounds, 0.5, 25);
+        assert!(!samples.is_empty(), "should generate at least one point");
+        assert!(samples.len() > 10, "should generate many points in a 10x10 area with r=0.5");
+    }
+
+    #[test]
+    fn all_samples_within_bounds() {
+        let mut rng = GlibcRand::new(7);
+        let bounds = Extents2d::new(1.0, 2.0, 5.0, 6.0);
+        let samples = generate_samples(&mut rng, bounds, 0.3, 25);
+        for p in &samples {
+            assert!(
+                p.x >= bounds.minx && p.x <= bounds.maxx
+                    && p.y >= bounds.miny && p.y <= bounds.maxy,
+                "point ({}, {}) outside bounds", p.x, p.y
+            );
+        }
+    }
+
+    #[test]
+    fn minimum_distance_respected() {
+        let mut rng = GlibcRand::new(123);
+        let bounds = Extents2d::new(0.0, 0.0, 5.0, 5.0);
+        let r = 0.3;
+        let samples = generate_samples(&mut rng, bounds, r, 25);
+        let rsq = r * r;
+        for i in 0..samples.len() {
+            for j in (i + 1)..samples.len() {
+                let dx = samples[i].x - samples[j].x;
+                let dy = samples[i].y - samples[j].y;
+                let dsq = dx * dx + dy * dy;
+                assert!(
+                    dsq >= rsq - 1e-9,
+                    "points {} and {} too close: dist={:.6}, r={r}",
+                    i, j, dsq.sqrt()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deterministic_with_same_seed() {
+        let bounds = Extents2d::new(0.0, 0.0, 5.0, 5.0);
+        let mut rng1 = GlibcRand::new(42);
+        let samples1 = generate_samples(&mut rng1, bounds, 0.3, 25);
+        let mut rng2 = GlibcRand::new(42);
+        let samples2 = generate_samples(&mut rng2, bounds, 0.3, 25);
+        assert_eq!(samples1.len(), samples2.len());
+        for (a, b) in samples1.iter().zip(samples2.iter()) {
+            assert_eq!(a.x, b.x);
+            assert_eq!(a.y, b.y);
+        }
+    }
+
+    #[test]
+    fn different_seeds_produce_different_samples() {
+        let bounds = Extents2d::new(0.0, 0.0, 5.0, 5.0);
+        let mut rng1 = GlibcRand::new(1);
+        let samples1 = generate_samples(&mut rng1, bounds, 0.3, 25);
+        let mut rng2 = GlibcRand::new(2);
+        let samples2 = generate_samples(&mut rng2, bounds, 0.3, 25);
+        // Lengths or positions should differ
+        let same = samples1.len() == samples2.len()
+            && samples1.iter().zip(samples2.iter()).all(|(a, b)| a.x == b.x && a.y == b.y);
+        assert!(!same, "different seeds should produce different point sets");
+    }
+
+    #[test]
+    fn larger_radius_produces_fewer_points() {
+        let bounds = Extents2d::new(0.0, 0.0, 10.0, 10.0);
+        let mut rng1 = GlibcRand::new(42);
+        let small_r = generate_samples(&mut rng1, bounds, 0.3, 25);
+        let mut rng2 = GlibcRand::new(42);
+        let large_r = generate_samples(&mut rng2, bounds, 1.0, 25);
+        assert!(
+            small_r.len() > large_r.len(),
+            "smaller radius should produce more points: {} vs {}",
+            small_r.len(),
+            large_r.len()
+        );
+    }
+}

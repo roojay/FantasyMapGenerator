@@ -92,3 +92,69 @@ pub fn line_segment_intersection(a: Point, b: Point, c: Point, d: Point) -> bool
     // 如果 C 和 D 在 AB 两侧，且 A 和 B 在 CD 两侧，则相交
     (c1 != c2) && (c3 != c4)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_intersection_perpendicular() {
+        // Horizontal line through origin + vertical line through origin
+        let p = Point::new(0.0, 0.0);
+        let r = Point::new(1.0, 0.0);
+        let q = Point::new(0.0, 0.0);
+        let s = Point::new(0.0, 1.0);
+        let result = line_intersection(p, r, q, s).unwrap();
+        assert!((result.x).abs() < 1e-9);
+        assert!((result.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn line_intersection_offset() {
+        // y = 1 (horizontal) and x = 2 (vertical)
+        let p = Point::new(0.0, 1.0);
+        let r = Point::new(1.0, 0.0);
+        let q = Point::new(2.0, 0.0);
+        let s = Point::new(0.0, 1.0);
+        let result = line_intersection(p, r, q, s).unwrap();
+        assert!((result.x - 2.0).abs() < 1e-9);
+        assert!((result.y - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn line_intersection_parallel_returns_none() {
+        let p = Point::new(0.0, 0.0);
+        let r = Point::new(1.0, 0.0);
+        let q = Point::new(0.0, 1.0);
+        let s = Point::new(1.0, 0.0);
+        assert!(line_intersection(p, r, q, s).is_none());
+    }
+
+    #[test]
+    fn line_segment_crossing() {
+        let a = Point::new(0.0, 0.0);
+        let b = Point::new(2.0, 2.0);
+        let c = Point::new(0.0, 2.0);
+        let d = Point::new(2.0, 0.0);
+        assert!(line_segment_intersection(a, b, c, d));
+    }
+
+    #[test]
+    fn line_segment_not_crossing() {
+        let a = Point::new(0.0, 0.0);
+        let b = Point::new(1.0, 0.0);
+        let c = Point::new(0.0, 1.0);
+        let d = Point::new(1.0, 1.0);
+        assert!(!line_segment_intersection(a, b, c, d));
+    }
+
+    #[test]
+    fn line_segment_t_shape_no_intersection() {
+        // Segments that share an endpoint but don't cross
+        let a = Point::new(0.0, 0.0);
+        let b = Point::new(1.0, 1.0);
+        let c = Point::new(2.0, 2.0);
+        let d = Point::new(3.0, 3.0);
+        assert!(!line_segment_intersection(a, b, c, d));
+    }
+}

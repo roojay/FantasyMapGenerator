@@ -24,21 +24,25 @@ export function LayerControl({ presentation, onLayerChange }: LayerControlProps)
       onChange={(event) => onLayerChange(key, event.currentTarget.checked)}
       classNames={{
         root: cn(
-          "rounded-md px-1.5 py-1 -mx-1.5 -my-1 cursor-pointer",
+          "rounded-md px-2 py-1.5 -mx-1.5 -my-1 cursor-pointer",
           "layer-toggle-hover",
           "transition-colors duration-200",
         ),
-        label: cn("cursor-pointer select-none text-xs", "whitespace-nowrap"),
+        label: cn(
+          "cursor-pointer select-none text-xs leading-tight",
+          "max-w-[7.5rem] break-words sm:max-w-none sm:whitespace-nowrap",
+        ),
         input: "cursor-pointer",
       }}
     />
   );
 
   return (
-    <Box className="pointer-events-none absolute bottom-4 left-1/2 z-30 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 lg:bottom-6 lg:w-auto">
+    <Box className="pointer-events-none absolute bottom-[max(0.75rem,var(--app-safe-bottom))] left-1/2 z-30 w-[calc(100%-1rem)] max-w-3xl -translate-x-1/2 sm:w-[calc(100%-2rem)] md:w-auto md:max-w-[calc(100%-2rem)] lg:bottom-6">
       <Box
         className={cn(
           "pointer-events-auto rounded-lg border px-3 py-2 shadow-md",
+          "pr-14 sm:pr-3 md:pr-3",
           "backdrop-blur-xl",
         )}
         style={{
@@ -51,7 +55,7 @@ export function LayerControl({ presentation, onLayerChange }: LayerControlProps)
         </Box>
 
         <Box className="block sm:hidden">
-          <Box className="grid grid-cols-2 gap-x-4 gap-y-2">{layerKeys.map(renderCheckbox)}</Box>
+          <Box className="grid grid-cols-2 gap-x-3 gap-y-1.5">{layerKeys.map(renderCheckbox)}</Box>
         </Box>
       </Box>
     </Box>

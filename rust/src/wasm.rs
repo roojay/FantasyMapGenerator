@@ -2,10 +2,12 @@
 //!
 //! 提供 JavaScript 可调用的 WASM 接口，用于在浏览器中生成地图。
 
+use crate::map_generator::MapLabelDrawData;
 use crate::presentation::webgpu::{WebGpuPresentationConfig, WebGpuScenePlugin};
 use crate::presentation::RenderDataPlugin;
 use crate::standard_svg;
 use crate::{Extents2d, GlibcRand, MapDrawData, MapExportOptions, MapGenerator};
+use serde::Serialize;
 use std::sync::OnceLock;
 use wasm_bindgen::prelude::*;
 
@@ -13,6 +15,8 @@ const TERRAIN_ELEVATION_SCALE: f32 = 64.0;
 const WATER_DEPTH_SCALE: f32 = 10.0;
 const OVERLAY_HEIGHT_OFFSET: f32 = 1.2;
 const LABEL_HEIGHT_OFFSET: f32 = 2.4;
+const INTERACTIVE_RASTER_MAX_DIMENSION: u32 = 2048;
+const INTERACTIVE_RASTER_MAX_TEXELS: u32 = 4_000_000;
 
 fn cached_city_name_buckets() -> &'static Vec<Vec<String>> {
     static CITY_NAME_BUCKETS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
@@ -70,126 +74,123 @@ pub struct WasmRenderPacket {
 
 #[wasm_bindgen]
 impl WasmRenderPacket {
-    #[wasm_bindgen(getter)]
-    pub fn metadata_json(&self) -> String {
-        self.metadata_json.clone()
-    }
+    // PERF: All getters use `std::mem::take` instead of `.clone()` to avoid
+    // redundant heap allocation + memcpy. The caller (JS worker) consumes each
+    // buffer exactly once and then calls `.free()`, so moving data out is safe
+    // and eliminates ~80 MB of needless copies per generation cycle.
 
     #[wasm_bindgen(getter)]
-    pub fn svg_json(&self) -> String {
-        self.svg_json.clone()
+    pub fn metadata_json(&mut self) -> String {
+        std::mem::take(&mut self.metadata_json)
     }
 
-    pub fn terrain_positions(&self) -> Vec<f32> {
-        self.terrain_positions.clone()
+    #[wasm_bindgen(getter)]
+    pub fn svg_json(&mut self) -> String {
+        std::mem::take(&mut self.svg_json)
     }
 
-    pub fn terrain_normals(&self) -> Vec<f32> {
-        self.terrain_normals.clone()
+    pub fn terrain_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.terrain_positions)
     }
 
-    pub fn terrain_uvs(&self) -> Vec<f32> {
-        self.terrain_uvs.clone()
+    pub fn terrain_normals(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.terrain_normals)
     }
 
-    pub fn terrain_indices(&self) -> Vec<u32> {
-        self.terrain_indices.clone()
+    pub fn terrain_uvs(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.terrain_uvs)
     }
 
-    pub fn height_texture(&self) -> Vec<u8> {
-        self.height_texture.clone()
+    pub fn terrain_indices(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.terrain_indices)
     }
 
-    pub fn land_mask_texture(&self) -> Vec<u8> {
-        self.land_mask_texture.clone()
+    pub fn height_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.height_texture)
     }
 
-    pub fn flux_texture(&self) -> Vec<u8> {
-        self.flux_texture.clone()
+    pub fn terrain_albedo_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.terrain_albedo_texture)
     }
 
-    pub fn terrain_albedo_texture(&self) -> Vec<u8> {
-        self.terrain_albedo_texture.clone()
+    pub fn roughness_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.roughness_texture)
     }
 
-    pub fn roughness_texture(&self) -> Vec<u8> {
-        self.roughness_texture.clone()
+    pub fn ao_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.ao_texture)
     }
 
-    pub fn ao_texture(&self) -> Vec<u8> {
-        self.ao_texture.clone()
+    pub fn water_color_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.water_color_texture)
     }
 
-    pub fn water_color_texture(&self) -> Vec<u8> {
-        self.water_color_texture.clone()
+    pub fn water_alpha_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.water_alpha_texture)
     }
 
-    pub fn water_alpha_texture(&self) -> Vec<u8> {
-        self.water_alpha_texture.clone()
+    pub fn coast_glow_texture(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.coast_glow_texture)
     }
 
-    pub fn coast_glow_texture(&self) -> Vec<u8> {
-        self.coast_glow_texture.clone()
+    pub fn slope_segments(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.slope_segments)
     }
 
-    pub fn slope_segments(&self) -> Vec<f32> {
-        self.slope_segments.clone()
+    pub fn river_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.river_positions)
     }
 
-    pub fn river_positions(&self) -> Vec<f32> {
-        self.river_positions.clone()
+    pub fn river_offsets(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.river_offsets)
     }
 
-    pub fn river_offsets(&self) -> Vec<u32> {
-        self.river_offsets.clone()
+    pub fn contour_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.contour_positions)
     }
 
-    pub fn contour_positions(&self) -> Vec<f32> {
-        self.contour_positions.clone()
+    pub fn contour_offsets(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.contour_offsets)
     }
 
-    pub fn contour_offsets(&self) -> Vec<u32> {
-        self.contour_offsets.clone()
+    pub fn border_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.border_positions)
     }
 
-    pub fn border_positions(&self) -> Vec<f32> {
-        self.border_positions.clone()
+    pub fn border_offsets(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.border_offsets)
     }
 
-    pub fn border_offsets(&self) -> Vec<u32> {
-        self.border_offsets.clone()
+    pub fn city_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.city_positions)
     }
 
-    pub fn city_positions(&self) -> Vec<f32> {
-        self.city_positions.clone()
+    pub fn town_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.town_positions)
     }
 
-    pub fn town_positions(&self) -> Vec<f32> {
-        self.town_positions.clone()
+    pub fn label_bytes(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.label_bytes)
     }
 
-    pub fn label_bytes(&self) -> Vec<u8> {
-        self.label_bytes.clone()
+    pub fn label_offsets(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.label_offsets)
     }
 
-    pub fn label_offsets(&self) -> Vec<u32> {
-        self.label_offsets.clone()
+    pub fn label_anchors(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.label_anchors)
     }
 
-    pub fn label_anchors(&self) -> Vec<f32> {
-        self.label_anchors.clone()
+    pub fn label_sizes(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.label_sizes)
     }
 
-    pub fn label_sizes(&self) -> Vec<f32> {
-        self.label_sizes.clone()
+    pub fn land_polygon_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.land_polygon_positions)
     }
 
-    pub fn land_polygon_positions(&self) -> Vec<f32> {
-        self.land_polygon_positions.clone()
-    }
-
-    pub fn land_polygon_offsets(&self) -> Vec<u32> {
-        self.land_polygon_offsets.clone()
+    pub fn land_polygon_offsets(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.land_polygon_offsets)
     }
 }
 
@@ -266,7 +267,15 @@ impl WasmMapGenerator {
         num_cities: i32,
         num_towns: i32,
     ) -> Result<WasmRenderPacket, JsValue> {
-        let draw_data = self.generate_draw_data(num_cities, num_towns, true)?;
+        let draw_data = self.generate_draw_data(
+            num_cities,
+            num_towns,
+            MapExportOptions {
+                include_raster_data: true,
+                max_raster_dimension: Some(INTERACTIVE_RASTER_MAX_DIMENSION),
+                max_raster_texels: Some(INTERACTIVE_RASTER_MAX_TEXELS),
+            },
+        )?;
         build_render_packet(&draw_data)
     }
 
@@ -292,7 +301,15 @@ impl WasmMapGenerator {
         num_towns: i32,
         include_raster_data: bool,
     ) -> Result<String, JsValue> {
-        let draw_data = self.generate_draw_data(num_cities, num_towns, include_raster_data)?;
+        let draw_data = self.generate_draw_data(
+            num_cities,
+            num_towns,
+            MapExportOptions {
+                include_raster_data,
+                max_raster_dimension: None,
+                max_raster_texels: None,
+            },
+        )?;
         serde_json::to_string(&draw_data).map_err(|err| JsValue::from_str(&err.to_string()))
     }
 
@@ -456,7 +473,7 @@ impl WasmMapGenerator {
         &mut self,
         num_cities: i32,
         num_towns: i32,
-        include_raster_data: bool,
+        export_options: MapExportOptions,
     ) -> Result<MapDrawData, JsValue> {
         // PERF: 将栅格导出显式化，避免普通网页路径总是携带大型 height/flux/mask 数组。
         self.generator.initialize();
@@ -485,30 +502,44 @@ impl WasmMapGenerator {
 
         Ok(self
             .generator
-            .collect_draw_data_with_options(MapExportOptions {
-                include_raster_data,
-            }))
+            .collect_draw_data_with_options(export_options))
     }
 }
 
+/// Borrow-based view of `MapDrawData` for SVG JSON serialization.
+/// Avoids deep-cloning all vector fields (~several MB) by borrowing from
+/// the original draw data and excluding raster-only fields.
+#[derive(Serialize)]
+struct SvgDrawDataRef<'a> {
+    image_width: u32,
+    image_height: u32,
+    draw_scale: f64,
+    contour: &'a [Vec<f64>],
+    river: &'a [Vec<f64>],
+    slope: &'a [f64],
+    city: &'a [f64],
+    town: &'a [f64],
+    territory: &'a [Vec<f64>],
+    label: &'a [MapLabelDrawData],
+}
+
 fn build_render_packet(draw_data: &MapDrawData) -> Result<WasmRenderPacket, JsValue> {
-    let svg_draw_data = MapDrawData {
+    // PERF: Use a borrow-based reference struct instead of cloning all vector
+    // fields. The previous code cloned contour, river, slope, city, town,
+    // territory and label just to set the raster fields to None.
+    let svg_ref = SvgDrawDataRef {
         image_width: draw_data.image_width,
         image_height: draw_data.image_height,
         draw_scale: draw_data.draw_scale,
-        contour: draw_data.contour.clone(),
-        river: draw_data.river.clone(),
-        slope: draw_data.slope.clone(),
-        city: draw_data.city.clone(),
-        town: draw_data.town.clone(),
-        territory: draw_data.territory.clone(),
-        label: draw_data.label.clone(),
-        heightmap: None,
-        flux_map: None,
-        land_mask: None,
-        land_polygons: None,
+        contour: &draw_data.contour,
+        river: &draw_data.river,
+        slope: &draw_data.slope,
+        city: &draw_data.city,
+        town: &draw_data.town,
+        territory: &draw_data.territory,
+        label: &draw_data.label,
     };
-    let svg_json = serde_json::to_string(&svg_draw_data)
+    let svg_json = serde_json::to_string(&svg_ref)
         .map_err(|err| JsValue::from_str(&err.to_string()))?;
     let packet = WebGpuScenePlugin::build(draw_data, &WebGpuPresentationConfig::default())
         .map_err(|err| JsValue::from_str(&err))?;
@@ -684,399 +715,6 @@ fn terrain_elevation(height: f32, is_land: bool) -> f32 {
     } else {
         -WATER_DEPTH_SCALE + height.clamp(0.0, 1.0) * (WATER_DEPTH_SCALE * 0.35)
     }
-}
-
-fn encode_scalar_texture(data: &[f32], width: u32, height: u32) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height * 4) as usize);
-    for value in data {
-        let encoded = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-        texture.extend_from_slice(&[encoded, encoded, encoded, 255]);
-    }
-    texture
-}
-
-fn encode_mask_texture(data: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height * 4) as usize);
-    for value in data {
-        let encoded = if *value > 0 { 255 } else { 0 };
-        texture.extend_from_slice(&[encoded, encoded, encoded, 255]);
-    }
-    texture
-}
-
-fn encode_albedo_texture(
-    height: &[f32],
-    land: &[u8],
-    flux: &[f32],
-    width: u32,
-    height_px: u32,
-) -> Vec<u8> {
-    let mut texture = Vec::with_capacity((width * height_px * 4) as usize);
-    for y in 0..height_px as usize {
-        for x in 0..width as usize {
-            let idx = y * width as usize + x;
-            let land_value = land[idx] > 0;
-            let height_value = height[idx].clamp(0.0, 1.0);
-            let flux_value = flux.get(idx).copied().unwrap_or(0.0).clamp(0.0, 1.0);
-            let coast = coastal_strength(land, width, height_px, x as i32, y as i32);
-            let [r, g, b] = if land_value {
-                colorize_land(height_value, flux_value, coast)
-            } else {
-                colorize_water(height_value, coast)
-            };
-            texture.extend_from_slice(&[r, g, b, 255]);
-        }
-    }
-    texture
-}
-
-struct SurfaceTexturePack {
-    terrain_albedo: Vec<u8>,
-    roughness: Vec<u8>,
-    ao: Vec<u8>,
-    water_color: Vec<u8>,
-    water_alpha: Vec<u8>,
-    coast_glow: Vec<u8>,
-}
-
-fn build_surface_texture_pack(
-    albedo_texture: &[u8],
-    height_texture: &[u8],
-    flux_texture: &[u8],
-    land_mask_texture: &[u8],
-    width: u32,
-    height: u32,
-) -> SurfaceTexturePack {
-    let pixel_count = (width * height) as usize;
-    let mut terrain_albedo = vec![0u8; pixel_count * 4];
-    let mut roughness = vec![0u8; pixel_count * 4];
-    let mut ao = vec![0u8; pixel_count * 4];
-    let mut water_color = vec![0u8; pixel_count * 4];
-    let mut water_alpha = vec![0u8; pixel_count * 4];
-    let mut coast_glow = vec![0u8; pixel_count * 4];
-
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let idx = pixel_offset_rgba(width, x as usize, y as usize);
-            let u = if width > 1 {
-                x as f32 / (width - 1) as f32
-            } else {
-                0.0
-            };
-            let v = if height > 1 {
-                y as f32 / (height - 1) as f32
-            } else {
-                0.0
-            };
-            let height_value =
-                sample_texture_channel_rgba(height_texture, width, height, x, y).clamp(0.0, 1.0);
-            let flux_value =
-                sample_texture_channel_rgba(flux_texture, width, height, x, y).clamp(0.0, 1.0);
-            let is_land = sample_mask_rgba(land_mask_texture, width, height, x, y);
-            let coast = coastal_strength_rgba(land_mask_texture, width, height, x, y);
-            let left = sample_texture_channel_rgba(height_texture, width, height, x - 1, y);
-            let right = sample_texture_channel_rgba(height_texture, width, height, x + 1, y);
-            let up = sample_texture_channel_rgba(height_texture, width, height, x, y - 1);
-            let down = sample_texture_channel_rgba(height_texture, width, height, x, y + 1);
-            let relief = clamp01(((right - left).abs() + (down - up).abs()) * 3.4);
-            let slope_dx = right - left;
-            let slope_dy = down - up;
-            let slope_mag = (slope_dx * slope_dx + slope_dy * slope_dy).sqrt();
-            let ridge_strength = clamp01(relief * 1.35 + slope_mag * 1.8);
-            let moisture =
-                clamp01(flux_value * 0.65 + coast * 0.32 + (0.42 - height_value).max(0.0) * 0.18);
-            let latitude_cool = 1.0 - ((v - 0.48).abs() * 1.7).clamp(0.0, 1.0);
-            let latitude_warm = clamp01(v * 1.18 + (v - 0.58).max(0.0) * 0.55);
-            let macro_noise = fbm2(u * 2.6 + 11.7, v * 2.4 + 3.9, 4);
-            let forest_noise = fbm2(u * 10.5 + 19.3, v * 10.5 + 7.1, 5);
-            let desert_noise = fbm2(u * 4.2 + 5.6, v * 3.7 + 17.2, 4);
-            let snow_noise = fbm2(u * 8.1 + 41.7, v * 8.4 + 12.9, 4);
-            let mountain_noise = fbm2(u * 6.4 + 2.1, v * 6.1 + 31.4, 4);
-            let continentality = clamp01(
-                0.48 + macro_noise * 0.28 + (u - 0.35).max(0.0) * 0.18 + (v - 0.55).max(0.0) * 0.16,
-            );
-            let dryness = clamp01(
-                latitude_warm * 0.42
-                    + continentality * 0.36
-                    + (1.0 - moisture) * 0.52
-                    + desert_noise * 0.18
-                    - coast * 0.14,
-            );
-            let forest_amount = clamp01(
-                (moisture - 0.22) * 1.15
-                    + forest_noise * 0.38
-                    + (0.68 - height_value).max(0.0) * 0.14
-                    - dryness * 0.52
-                    - ridge_strength * 0.12,
-            );
-            let desert_amount = clamp01(
-                (dryness - 0.42) * 1.2
-                    + (0.36 - moisture).max(0.0) * 0.55
-                    + (0.55 - height_value).max(0.0) * 0.12,
-            );
-            let snowline = 0.74 - latitude_cool * 0.17 + macro_noise * 0.04
-                - moisture * 0.03
-                - snow_noise * 0.02;
-            let snow_amount = clamp01(
-                ((height_value - snowline) / 0.12) + ridge_strength * 0.28 + mountain_noise * 0.08
-                    - latitude_warm * 0.08,
-            );
-            let aspect_light = clamp01(0.5 + (-slope_dx * 0.72 - slope_dy * 0.58) * 2.4);
-            let cool_ridge = clamp01(
-                ridge_strength
-                    * ((height_value - 0.42).max(0.0) * 1.1 + latitude_cool * 0.32)
-                    * (1.0 - aspect_light),
-            );
-            let warm_ridge = clamp01(
-                ridge_strength
-                    * ((height_value - 0.28).max(0.0) * 0.95 + latitude_warm * 0.22)
-                    * aspect_light,
-            );
-
-            let mut color = [
-                albedo_texture[idx],
-                albedo_texture[idx + 1],
-                albedo_texture[idx + 2],
-            ];
-
-            if is_land {
-                color = [
-                    (apply_contrast(color[0] as f32 / 255.0, 1.08) * 255.0).round() as u8,
-                    (apply_contrast(color[1] as f32 / 255.0, 1.10) * 255.0).round() as u8,
-                    (apply_contrast(color[2] as f32 / 255.0, 1.06) * 255.0).round() as u8,
-                ];
-                color = lerp_color(
-                    color,
-                    [86, 110, 53],
-                    clamp01((0.58 - (height_value - 0.34).abs()) * 0.58 + flux_value * 0.14),
-                );
-                color = lerp_color(
-                    color,
-                    [172, 152, 101],
-                    clamp01((0.18 - height_value) * 3.1) * (1.0 - flux_value * 0.7),
-                );
-                color = lerp_color(
-                    color,
-                    [98, 96, 101],
-                    clamp01(relief * 0.68 + (height_value - 0.58).max(0.0) * 0.6),
-                );
-                color = lerp_color(
-                    color,
-                    [242, 244, 247],
-                    clamp01((height_value - 0.78) * 3.5 + relief * 0.2),
-                );
-                color = lerp_color(
-                    color,
-                    [201, 190, 145],
-                    clamp01(coast * 0.18 + (0.1 - height_value).max(0.0) * 2.3),
-                );
-                color = lerp_color(color, [54, 83, 44], forest_amount * 0.72);
-                color = lerp_color(color, [188, 169, 118], desert_amount * 0.78);
-                color = lerp_color(color, [104, 114, 136], cool_ridge * 0.6);
-                color = lerp_color(color, [164, 136, 94], warm_ridge * 0.42);
-                color = lerp_color(color, [246, 248, 250], snow_amount * 0.92);
-            } else {
-                color = lerp_color(color, [18, 44, 68], 0.34);
-            }
-
-            let roughness_value = if is_land {
-                clamp01(
-                    0.94 - flux_value * 0.18
-                        - forest_amount * 0.06
-                        - snow_amount * 0.08
-                        - warm_ridge * 0.04
-                        + desert_amount * 0.06
-                        + relief * 0.08,
-                )
-            } else {
-                1.0
-            };
-            let ao_value = if is_land {
-                clamp01(
-                    0.92 - relief * 0.42
-                        + flux_value * 0.06
-                        + (height_value - 0.72).max(0.0) * 0.04
-                        - forest_amount * 0.08
-                        + cool_ridge * 0.06,
-                )
-            } else {
-                clamp01(0.96 - coast * 0.08)
-            };
-
-            write_rgba(&mut terrain_albedo, idx, color[0], color[1], color[2], 255);
-
-            let roughness_encoded = (roughness_value * 255.0).round() as u8;
-            write_rgba(
-                &mut roughness,
-                idx,
-                roughness_encoded,
-                roughness_encoded,
-                roughness_encoded,
-                255,
-            );
-
-            let ao_encoded = (ao_value * 255.0).round() as u8;
-            write_rgba(&mut ao, idx, ao_encoded, ao_encoded, ao_encoded, 255);
-
-            let water_depth = clamp01(1.0 - height_value);
-            let shallow_mix = clamp01(1.0 - water_depth * 1.28);
-            let water_base = lerp_color(
-                [9, 38, 69],
-                [66, 158, 199],
-                shallow_mix * 0.8 + coast * 0.18,
-            );
-            let water_tint = lerp_color(water_base, [138, 218, 242], coast * 0.26);
-            let water_opacity = if is_land {
-                0.0
-            } else {
-                clamp01(0.84 - coast * 0.22 + shallow_mix * 0.08)
-            };
-            let glow_opacity = if is_land {
-                0.0
-            } else {
-                clamp01(coast * 0.78 + shallow_mix * 0.12)
-            };
-
-            write_rgba(
-                &mut water_color,
-                idx,
-                water_tint[0],
-                water_tint[1],
-                water_tint[2],
-                255,
-            );
-
-            let water_alpha_encoded = (water_opacity * 255.0).round() as u8;
-            write_rgba(
-                &mut water_alpha,
-                idx,
-                water_alpha_encoded,
-                water_alpha_encoded,
-                water_alpha_encoded,
-                255,
-            );
-
-            let glow_encoded = (glow_opacity * 255.0).round() as u8;
-            write_rgba(
-                &mut coast_glow,
-                idx,
-                glow_encoded,
-                glow_encoded,
-                glow_encoded,
-                255,
-            );
-        }
-    }
-
-    SurfaceTexturePack {
-        terrain_albedo,
-        roughness,
-        ao,
-        water_color,
-        water_alpha,
-        coast_glow,
-    }
-}
-
-fn pixel_offset_rgba(width: u32, x: usize, y: usize) -> usize {
-    (y * width as usize + x) * 4
-}
-
-fn write_rgba(texture: &mut [u8], offset: usize, r: u8, g: u8, b: u8, a: u8) {
-    texture[offset] = r;
-    texture[offset + 1] = g;
-    texture[offset + 2] = b;
-    texture[offset + 3] = a;
-}
-
-fn sample_texture_channel_rgba(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
-    let clamped_x = x.clamp(0, width.saturating_sub(1) as i32) as usize;
-    let clamped_y = y.clamp(0, height.saturating_sub(1) as i32) as usize;
-    let idx = pixel_offset_rgba(width, clamped_x, clamped_y);
-    texture[idx] as f32 / 255.0
-}
-
-fn sample_mask_rgba(texture: &[u8], width: u32, height: u32, x: i32, y: i32) -> bool {
-    sample_texture_channel_rgba(texture, width, height, x, y) > 0.5
-}
-
-fn coastal_strength_rgba(mask: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {
-    let center: f32 = if sample_mask_rgba(mask, width, height, x, y) {
-        1.0
-    } else {
-        0.0
-    };
-    let mut delta = 0.0;
-    for oy in -1..=1 {
-        for ox in -1..=1 {
-            if ox == 0 && oy == 0 {
-                continue;
-            }
-            let sample: f32 = if sample_mask_rgba(mask, width, height, x + ox, y + oy) {
-                1.0
-            } else {
-                0.0
-            };
-            delta += (center - sample).abs();
-        }
-    }
-    clamp01(delta / 8.0)
-}
-
-fn clamp01(value: f32) -> f32 {
-    value.clamp(0.0, 1.0)
-}
-
-fn apply_contrast(value: f32, contrast: f32) -> f32 {
-    clamp01((value - 0.5) * contrast + 0.5)
-}
-
-fn fbm2(x: f32, y: f32, octaves: usize) -> f32 {
-    let mut value = 0.0;
-    let mut amplitude = 0.5;
-    let mut frequency = 1.0;
-    let mut total = 0.0;
-
-    for _ in 0..octaves {
-        value += value_noise_2d(x * frequency, y * frequency) * amplitude;
-        total += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-
-    if total <= 0.0 {
-        0.0
-    } else {
-        value / total
-    }
-}
-
-fn value_noise_2d(x: f32, y: f32) -> f32 {
-    let x0 = x.floor();
-    let y0 = y.floor();
-    let tx = x - x0;
-    let ty = y - y0;
-
-    let v00 = hash2(x0, y0);
-    let v10 = hash2(x0 + 1.0, y0);
-    let v01 = hash2(x0, y0 + 1.0);
-    let v11 = hash2(x0 + 1.0, y0 + 1.0);
-
-    let sx = smoothstep01(tx);
-    let sy = smoothstep01(ty);
-    let ix0 = v00 + (v10 - v00) * sx;
-    let ix1 = v01 + (v11 - v01) * sx;
-    ix0 + (ix1 - ix0) * sy
-}
-
-fn smoothstep01(t: f32) -> f32 {
-    let t = clamp01(t);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn hash2(x: f32, y: f32) -> f32 {
-    let v = (x * 127.1 + y * 311.7).sin() * 43_758.547;
-    v.fract().abs()
 }
 
 fn coastal_strength(mask: &[u8], width: u32, height: u32, x: i32, y: i32) -> f32 {

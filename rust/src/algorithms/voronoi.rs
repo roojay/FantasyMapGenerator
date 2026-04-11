@@ -433,3 +433,86 @@ fn find_or_create_twin(
     vertex_edges[from_vi].push((to_vj, eji.id.id as usize));
     eji
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algorithms::delaunay::triangulate;
+    use crate::data_structures::dcel::Point;
+
+    fn make_voronoi_from_points(mut pts: Vec<Point>) -> (Dcel, Dcel) {
+        let delaunay = triangulate(&mut pts);
+        let voronoi = delaunay_to_voronoi(&delaunay);
+        (delaunay, voronoi)
+    }
+
+    fn grid_points() -> Vec<Point> {
+        // 5x5 interior grid — avoids boundary issues
+        let mut pts = Vec::new();
+        for i in 0..5 {
+            for j in 0..5 {
+                pts.push(Point::new(i as f64, j as f64));
+            }
+        }
+        pts
+    }
+
+    #[test]
+    fn voronoi_from_grid_is_nonempty() {
+        let (_, voronoi) = make_voronoi_from_points(grid_points());
+        assert!(!voronoi.vertices.is_empty(), "should have vertices");
+        assert!(!voronoi.edges.is_empty(), "should have edges");
+        assert!(!voronoi.faces.is_empty(), "should have faces");
+    }
+
+    #[test]
+    fn voronoi_has_reasonable_face_count() {
+        let (delaunay, voronoi) = make_voronoi_from_points(grid_points());
+        // After Delaunay cleanup, boundary faces are removed.
+        // Voronoi faces correspond to Delaunay interior vertices.
+        // Just verify we have a non-trivial count.
+        assert!(
+            voronoi.faces.len() > 0,
+            "voronoi should have faces"
+        );
+        assert!(
+            voronoi.faces.len() <= delaunay.vertices.len(),
+            "voronoi faces ({}) should not exceed delaunay vertices ({})",
+            voronoi.faces.len(),
+            delaunay.vertices.len()
+        );
+    }
+
+    #[test]
+    fn voronoi_vertices_from_delaunay_faces() {
+        let (delaunay, voronoi) = make_voronoi_from_points(grid_points());
+        // Each Delaunay face (triangle) → one Voronoi vertex (circumcenter)
+        assert_eq!(
+            voronoi.vertices.len(),
+            delaunay.faces.len(),
+            "voronoi vertices ({}) should equal delaunay faces ({})",
+            voronoi.vertices.len(),
+            delaunay.faces.len()
+        );
+    }
+
+    #[test]
+    fn voronoi_all_edges_have_twins() {
+        let (_, voronoi) = make_voronoi_from_points(grid_points());
+        for edge in &voronoi.edges {
+            assert!(edge.twin.is_valid(), "edge {} missing twin", edge.id.id);
+        }
+    }
+
+    #[test]
+    fn voronoi_from_many_random_points() {
+        use crate::utils::rand::GlibcRand;
+        let mut rng = GlibcRand::new(42);
+        let pts: Vec<Point> = (0..50)
+            .map(|_| Point::new(rng.random_double(0.0, 10.0), rng.random_double(0.0, 10.0)))
+            .collect();
+        let (_, voronoi) = make_voronoi_from_points(pts);
+        assert!(voronoi.vertices.len() > 10);
+        assert!(voronoi.faces.len() > 10);
+    }
+}

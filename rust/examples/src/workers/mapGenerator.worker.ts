@@ -33,11 +33,27 @@ interface ReadyResponse {
   type: "ready";
 }
 
+interface WasmMemoryLog {
+  afterInit: number;
+  beforeGenerate: number;
+  afterGenerateRenderPacket: number;
+  afterPacketExtraction: number;
+  afterFree: number;
+}
+
+interface WorkerTimingLog {
+  wasmGenerateMs: number;
+  packetExtractMs: number;
+  totalWorkerMs: number;
+}
+
 interface GenerateSuccessResponse {
   type: "generate-success";
   requestId: number;
   packet: MapScenePacket;
   seed: number;
+  wasmMemoryLog?: WasmMemoryLog;
+  workerTiming?: WorkerTimingLog;
 }
 
 interface ExportJsonSuccessResponse {
@@ -60,16 +76,33 @@ type WorkerResponse =
   | ErrorResponse;
 
 let wasmModule: WasmModule | null = null;
+let wasmMemory: WebAssembly.Memory | null = null;
 let warmupComplete = false;
+let memLog: WasmMemoryLog = { afterInit: 0, beforeGenerate: 0, afterGenerateRenderPacket: 0, afterPacketExtraction: 0, afterFree: 0 };
 const workerScope = self as typeof self & {
   postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
 };
 
+function getWasmMemoryMB(): string {
+  if (!wasmMemory) return "N/A";
+  return (wasmMemory.buffer.byteLength / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function getWasmMemoryBytes(): number {
+  if (!wasmMemory) return 0;
+  return wasmMemory.buffer.byteLength;
+}
+
 async function ensureWasmModule() {
   if (!wasmModule) {
     const pkg = await import("../../pkg/fantasy_map_generator.js");
-    await pkg.default();
+    const exports = await pkg.default();
+    // wasm-bindgen default() returns instance.exports which includes 'memory'
+    wasmMemory = (exports as unknown as { memory: WebAssembly.Memory }).memory;
     wasmModule = pkg;
+    memLog = { afterInit: 0, beforeGenerate: 0, afterGenerateRenderPacket: 0, afterPacketExtraction: 0, afterFree: 0 };
+    memLog.afterInit = getWasmMemoryBytes();
+    console.log(`[WASM-MEM] after init: ${getWasmMemoryMB()}`);
   }
 
   return wasmModule;
@@ -118,7 +151,13 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       return;
     }
 
+    console.log(`[WASM-MEM] before generate: ${getWasmMemoryMB()}`);
+    memLog.beforeGenerate = getWasmMemoryBytes();
+    const t0 = performance.now();
     const wasmPacket = generator.generate_render_packet(cities, towns);
+    const t1 = performance.now();
+    console.log(`[WASM-MEM] after generate_render_packet: ${getWasmMemoryMB()}`);
+    memLog.afterGenerateRenderPacket = getWasmMemoryBytes();
     const actualSeed = generator.get_seed();
 
     const packet = scenePacketFromWasm({
@@ -129,8 +168,8 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       terrainUvs: wasmPacket.terrain_uvs(),
       terrainIndices: wasmPacket.terrain_indices(),
       heightTexture: wasmPacket.height_texture(),
-      landMaskTexture: wasmPacket.land_mask_texture(),
-      fluxTexture: wasmPacket.flux_texture(),
+      landMaskTexture: new Uint8Array(0),
+      fluxTexture: new Uint8Array(0),
       terrainAlbedoTexture: wasmPacket.terrain_albedo_texture(),
       roughnessTexture: wasmPacket.roughness_texture(),
       aoTexture: wasmPacket.ao_texture(),
@@ -162,14 +201,30 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       towns,
     });
 
+    console.log(`[WASM-MEM] after packet extraction: ${getWasmMemoryMB()}`);
+    memLog.afterPacketExtraction = getWasmMemoryBytes();
+    const t2 = performance.now();
+
     wasmPacket.free();
     generator.free();
+
+    console.log(`[WASM-MEM] after free (packet+generator): ${getWasmMemoryMB()}`);
+    memLog.afterFree = getWasmMemoryBytes();
+    const t3 = performance.now();
+
+    const workerTiming: WorkerTimingLog = {
+      wasmGenerateMs: Math.round(t1 - t0),
+      packetExtractMs: Math.round(t2 - t1),
+      totalWorkerMs: Math.round(t3 - t0),
+    };
 
     const response: GenerateSuccessResponse = {
       type: "generate-success",
       requestId,
       packet,
       seed: actualSeed,
+      wasmMemoryLog: { ...memLog },
+      workerTiming,
     };
     workerScope.postMessage(response, packetTransferables(packet));
   } catch (error) {

@@ -26,10 +26,11 @@ export function MapStats({ mapData }: MapStatsProps) {
   ];
 
   return (
-    <Box className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 lg:top-6">
+    <Box className="pointer-events-none absolute left-1/2 top-[calc(var(--app-safe-top)+4.25rem)] z-30 w-[calc(100%-1rem)] -translate-x-1/2 sm:top-4 sm:w-auto lg:top-6">
       <Box
         className={cn(
           "pointer-events-auto rounded-lg border px-3 py-2 shadow-md",
+          "w-full sm:w-auto",
           "backdrop-blur-xl",
         )}
         style={{
@@ -37,23 +38,17 @@ export function MapStats({ mapData }: MapStatsProps) {
           borderColor: "rgb(var(--app-border))",
         }}
       >
-        <Box className="grid auto-cols-max grid-flow-col items-center gap-7">
-          {stats.map((stat, index) => (
-            <Box key={stat.label} className="relative">
-              {index > 0 && (
-                <Box
-                  className="absolute -left-[0.875rem] top-1/2 h-4 w-px -translate-y-1/2"
-                  style={{ backgroundColor: "rgba(var(--app-border), 0.6)" }}
-                />
-              )}
+        <Box className="grid grid-cols-2 gap-x-4 gap-y-2 sm:auto-cols-max sm:grid-flow-col sm:items-center sm:gap-7">
+          {stats.map((stat) => (
+            <Box key={stat.label} className="min-w-0">
               <Box className="flex items-end gap-1.5">
-                <Text size="xs" c="dimmed" className="whitespace-nowrap leading-none">
+                <Text size="xs" c="dimmed" className="truncate leading-none sm:whitespace-nowrap">
                   {stat.label}
                 </Text>
                 <Text
                   size="sm"
                   fw={700}
-                  className="tabular-nums leading-none"
+                  className="tabular-nums shrink-0 leading-none"
                   style={{ color: "rgb(var(--app-accent))" }}
                 >
                   {stat.value}

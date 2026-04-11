@@ -2,6 +2,10 @@
 
 :root {
   color-scheme: light;
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
   --app-bg: 248 250 252;
   --app-surface: 255 255 255;
   --app-elevated: 255 255 255;
@@ -39,8 +43,14 @@ body,
   margin: 0;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   overflow: hidden;
+  overscroll-behavior: none;
   font-family:
     "Inter Variable",
     "Inter",
@@ -380,4 +390,30 @@ button,
 
 .renderer-switch-kicker {
   color: rgb(var(--app-muted));
+}
+
+@media (pointer: coarse) {
+  .mantine-ActionIcon-root {
+    min-height: 2.625rem;
+    min-width: 2.625rem;
+  }
+
+  .mantine-Button-root {
+    min-height: 2.5rem;
+  }
+}
+
+@media (max-width: 48em) {
+  .mantine-Input-input,
+  .mantine-NumberInput-input {
+    font-size: 16px !important;
+    line-height: 1.35;
+  }
+}
+
+@media (hover: none) {
+  .mantine-ActionIcon-root:hover,
+  .mantine-Button-root:hover {
+    transform: none !important;
+  }
 }

@@ -6,6 +6,7 @@ import type {
   RendererPreference,
   RendererRuntimeBackend,
 } from "@/types/map";
+import { getSvgMapJson } from "@/types/map";
 
 const DEFAULT_LAYERS: MapLayers = {
   slope: true,
@@ -49,6 +50,8 @@ const FIT_PADDING = 0.92;
 const LABEL_Z_OFFSET = 2.2;
 const MARKER_BASE_Z_OFFSET = 0.82;
 const MARKER_LAYER_Z_STEP = 0.18;
+const PREVIEW_TEXTURE_MAX_DIMENSION = 1536;
+const PREVIEW_TEXTURE_MAX_TEXELS = 1_500_000;
 const MALDIVES_SHORE_COLOR: [number, number, number] = [197, 241, 229];
 const MALDIVES_LAGOON_COLOR: [number, number, number] = [84, 216, 210];
 const MALDIVES_TURQUOISE_COLOR: [number, number, number] = [30, 176, 194];
@@ -153,6 +156,10 @@ async function loadThreeRuntime() {
   return threeRuntimePromise;
 }
 
+// Optimization D: Prefetch Three.js modules at import time so they load in
+// parallel with WASM initialization, rather than waiting for initialize().
+void loadThreeRuntime();
+
 function packetToThreeTriplets(source: Float32Array) {
   const output = new Float32Array(source.length);
   for (let index = 0; index < source.length; index += 3) {
@@ -161,12 +168,6 @@ function packetToThreeTriplets(source: Float32Array) {
     output[index + 2] = source[index + 1];
   }
   return output;
-}
-
-function pathPositionSlice(layer: PathLayerPacket, pathIndex: number) {
-  const start = layer.offsets[pathIndex] * 3;
-  const end = layer.offsets[pathIndex + 1] * 3;
-  return layer.positions.subarray(start, end);
 }
 
 function buildTerrainGeometry(runtime: ThreeRuntime, packet: MapScenePacket) {
@@ -399,6 +400,31 @@ function isPowerOfTwo(value: number) {
   return value > 0 && (value & (value - 1)) === 0;
 }
 
+function clampPreviewTextureSize(width: number, height: number) {
+  const safeWidth = Math.max(1, Math.round(width));
+  const safeHeight = Math.max(1, Math.round(height));
+  const texelCount = safeWidth * safeHeight;
+  if (
+    safeWidth <= PREVIEW_TEXTURE_MAX_DIMENSION &&
+    safeHeight <= PREVIEW_TEXTURE_MAX_DIMENSION &&
+    texelCount <= PREVIEW_TEXTURE_MAX_TEXELS
+  ) {
+    return { width: safeWidth, height: safeHeight };
+  }
+
+  const dimensionScale = Math.min(
+    PREVIEW_TEXTURE_MAX_DIMENSION / safeWidth,
+    PREVIEW_TEXTURE_MAX_DIMENSION / safeHeight,
+  );
+  const texelScale = Math.sqrt(PREVIEW_TEXTURE_MAX_TEXELS / texelCount);
+  const scale = Math.min(dimensionScale, texelScale, 1);
+
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
+}
+
 function dataTexture(
   runtime: ThreeRuntime,
   data: Uint8Array,
@@ -419,6 +445,31 @@ function dataTexture(
   if (srgb) {
     texture.colorSpace = runtime.THREE.SRGBColorSpace;
   }
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * PERF: Single-channel (R8) DataTexture — 4× smaller than RGBA for scalar
+ * data like height, roughness, AO, waterAlpha, and coastGlow.  The shader
+ * reads `.r`; Three.js fills `.g = .b = 0`, `.a = 1` automatically.
+ */
+function dataTextureR8(
+  runtime: ThreeRuntime,
+  data: Uint8Array,
+  width: number,
+  height: number,
+) {
+  const texture = new runtime.THREE.DataTexture(data, width, height, runtime.THREE.RedFormat);
+  const canMipMap = isPowerOfTwo(width) && isPowerOfTwo(height);
+  texture.flipY = true;
+  texture.wrapS = runtime.THREE.ClampToEdgeWrapping;
+  texture.wrapT = runtime.THREE.ClampToEdgeWrapping;
+  texture.minFilter = canMipMap
+    ? runtime.THREE.LinearMipmapLinearFilter
+    : runtime.THREE.LinearFilter;
+  texture.magFilter = runtime.THREE.LinearFilter;
+  texture.generateMipmaps = canMipMap;
   texture.needsUpdate = true;
   return texture;
 }
@@ -447,8 +498,8 @@ function disposeMaterial(
 }
 
 function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
-  const width = packet.metadata.terrainWidth;
-  const height = packet.metadata.terrainHeight;
+  const width = packet.metadata.textureWidth;
+  const height = packet.metadata.textureHeight;
   const precomputedTerrainAlbedo = packet.textures.terrainAlbedo;
   const precomputedRoughness = packet.textures.roughness;
   const precomputedAo = packet.textures.ao;
@@ -466,12 +517,12 @@ function buildSurfaceTextures(runtime: ThreeRuntime, packet: MapScenePacket) {
   ) {
     return {
       terrainAlbedo: dataTexture(runtime, precomputedTerrainAlbedo, width, height, true),
-      height: dataTexture(runtime, packet.textures.height, width, height),
-      roughness: dataTexture(runtime, precomputedRoughness, width, height),
-      ao: dataTexture(runtime, precomputedAo, width, height),
+      height: dataTextureR8(runtime, packet.textures.height, width, height),
+      roughness: dataTextureR8(runtime, precomputedRoughness, width, height),
+      ao: dataTextureR8(runtime, precomputedAo, width, height),
       waterColor: dataTexture(runtime, precomputedWaterColor, width, height, true),
-      waterAlpha: dataTexture(runtime, precomputedWaterAlpha, width, height),
-      coastGlow: dataTexture(runtime, precomputedCoastGlow, width, height),
+      waterAlpha: dataTextureR8(runtime, precomputedWaterAlpha, width, height),
+      coastGlow: dataTextureR8(runtime, precomputedCoastGlow, width, height),
     };
   }
 
@@ -988,7 +1039,7 @@ export class FantasyMapThreeRenderer {
   >();
   private lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }> = [];
   private svgSourceHash: string | null = null;
-
+  private lineMaterialCache = new Map<string, any>();
   constructor(stage: HTMLDivElement) {
     this.stage = stage;
   }
@@ -1083,12 +1134,13 @@ export class FantasyMapThreeRenderer {
   }
 
   private makeSvgCacheKey() {
-    if (!this.packet?.svgMapJson) {
+    const svgJson = this.packet ? getSvgMapJson(this.packet) : undefined;
+    if (!svgJson) {
       return null;
     }
 
     if (this.svgSourceHash === null) {
-      this.svgSourceHash = `${this.packet.svgMapJson.length}:${hashString(this.packet.svgMapJson)}`;
+      this.svgSourceHash = `${svgJson.length}:${hashString(svgJson)}`;
     }
 
     return JSON.stringify({
@@ -1109,6 +1161,10 @@ export class FantasyMapThreeRenderer {
   private invalidateRenderCaches() {
     this.invalidateSvgCache();
     this.modeDirty.webgpu = true;
+    for (const mat of this.lineMaterialCache.values()) {
+      if (typeof mat.dispose === "function") mat.dispose();
+    }
+    this.lineMaterialCache.clear();
   }
 
   private captureViewState(): RenderViewState | null {
@@ -1397,7 +1453,7 @@ export class FantasyMapThreeRenderer {
   }
 
   primeSvgMarkup() {
-    if (!this.packet?.svgMapJson) {
+    if (!this.packet || !getSvgMapJson(this.packet)) {
       return;
     }
 
@@ -1583,6 +1639,7 @@ export class FantasyMapThreeRenderer {
 
   private async rebuildScene() {
     if (!this.scene || !this.packet || !this.runtime || !this.renderMode) return;
+    const sceneStart = performance.now();
 
     for (const root of this.managedRoots) {
       this.scene.remove(root);
@@ -1593,17 +1650,89 @@ export class FantasyMapThreeRenderer {
     this.lineMaterials = [];
     this.svgRenderDirty = true;
     this.nativeSvgViewport = null;
+    const disposeEnd = performance.now();
 
-    const { scene, layerRoots, roots, lineMaterials } = await this.createSceneGraph(
-      this.renderMode,
-    );
+    const { scene, layerRoots, roots, lineMaterials } = this.renderMode === "svg"
+      ? await this.createSceneGraphAsync(this.renderMode)
+      : this.createSceneGraphSync();
+    const sceneEnd = performance.now();
     this.scene = scene;
     this.layerRoots = layerRoots;
     this.managedRoots = roots;
     this.lineMaterials = lineMaterials;
 
+    // Release heavy binary data from the packet now that the Three.js scene
+    // owns all geometry and textures.  Keeps metadata + SVG JSON for export.
+    if (this.packet) {
+      const empty32 = new Float32Array(0);
+      const empty8 = new Uint8Array(0);
+      const emptyU32 = new Uint32Array(0);
+      this.packet.terrain = { positions: empty32, normals: empty32, uvs: empty32, indices: emptyU32 };
+      this.packet.textures = { height: empty8, landMask: empty8, flux: empty8 };
+      this.packet.layers = {
+        slopeSegments: empty32,
+        river: { positions: empty32, offsets: emptyU32 },
+        contour: { positions: empty32, offsets: emptyU32 },
+        border: { positions: empty32, offsets: emptyU32 },
+      };
+      this.packet.markers = { city: empty32, town: empty32 };
+      this.packet.labels = { bytes: empty8, offsets: emptyU32, anchors: empty32, sizes: empty32, items: [] };
+      this.packet.landPolygonPositions = empty32;
+      this.packet.landPolygonOffsets = emptyU32;
+    }
+
     this.applyLayerVisibility();
+
+    // --- Optimization A: compileAsync pre-compilation ---
+    // Pre-compile all shader pipelines before first draw to avoid blocking render.
+    if (
+      this.renderMode !== "svg" &&
+      this.renderer &&
+      this.camera &&
+      typeof this.renderer.compileAsync === "function"
+    ) {
+      // --- Optimization C+E: Progressive rendering ---
+      // Phase 1: Hide overlay layers, compile & draw terrain only first.
+      const overlayKeys: (keyof typeof layerRoots)[] = [
+        "slope", "river", "contour", "border", "city", "town", "label",
+      ];
+      for (const key of overlayKeys) {
+        const root = layerRoots[key];
+        if (root) root.visible = false;
+      }
+
+      const compileStart = performance.now();
+      await this.renderer.compileAsync(this.scene, this.camera);
+      const phase1Ms = Math.round(performance.now() - compileStart);
+
+      // Draw terrain immediately so user sees the map surface
+      this.draw();
+
+      // Phase 2: Show overlays, compile their shaders, then redraw
+      for (const key of overlayKeys) {
+        const root = layerRoots[key];
+        if (root) root.visible = true;
+      }
+      this.applyLayerVisibility();
+
+      // Yield to main thread so Phase 1 frame paints on screen
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+      const phase2Start = performance.now();
+      await this.renderer.compileAsync(this.scene, this.camera);
+      const phase2Ms = Math.round(performance.now() - phase2Start);
+
+      console.log(`[PERF] ShaderCompile Phase1=${phase1Ms}ms Phase2=${phase2Ms}ms`);
+      (self as unknown as Record<string, unknown>).__shaderCompileMs = phase1Ms + phase2Ms;
+    }
+
     this.draw();
+    const drawEnd = performance.now();
+    const disposeMs = Math.round(disposeEnd - sceneStart);
+    const sceneBuildMs = Math.round(sceneEnd - disposeEnd);
+    const drawMs = Math.round(drawEnd - sceneEnd);
+    console.log(`[PERF] Dispose: ${disposeMs}ms | SceneBuild: ${sceneBuildMs}ms | Draw: ${drawMs}ms`);
+    (self as unknown as Record<string, unknown>).__sceneTiming = { disposeMs, sceneBuildMs, drawMs };
   }
 
   private mountNativeSvgMarkup(svgMarkup: string) {
@@ -1655,7 +1784,12 @@ export class FantasyMapThreeRenderer {
     this.applySvgViewportTransform();
   }
 
-  private async createSceneGraph(mode: RenderBackend) {
+  private async createSceneGraphAsync(mode: RenderBackend): Promise<{
+    scene: import("three").Scene;
+    layerRoots: Partial<Record<keyof MapLayers, import("three").Object3D>>;
+    roots: import("three").Object3D[];
+    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>;
+  }> {
     if (!this.runtime || !this.packet || !this.camera) {
       throw new Error("Renderer is not ready");
     }
@@ -1675,12 +1809,13 @@ export class FantasyMapThreeRenderer {
 
     const useTextureFallback = this.packet.landPolygonOffsets.length <= 1;
 
-    if (useTextureFallback && this.packet.svgMapJson) {
+    if (useTextureFallback && getSvgMapJson(this.packet)) {
+      const fallbackTextureSize = this.getPreviewTextureDimensions();
       const texture = await svgMarkupToTexture(
         this.runtime,
         await this.buildMapSvgMarkup(),
-        this.packet.metadata.imageWidth,
-        this.packet.metadata.imageHeight,
+        fallbackTextureSize.width,
+        fallbackTextureSize.height,
       );
 
       const plane = new this.runtime.THREE.Mesh(
@@ -1700,6 +1835,22 @@ export class FantasyMapThreeRenderer {
       return { scene, layerRoots, roots, lineMaterials };
     }
 
+    // Non-fallback WebGPU path: delegate to synchronous builder
+    return this.createSceneGraphSync();
+  }
+
+  /** Synchronous scene graph builder for the WebGPU direct-render path. */
+  private createSceneGraphSync() {
+    if (!this.runtime || !this.packet || !this.camera) {
+      throw new Error("Renderer is not ready");
+    }
+
+    const scene = new this.runtime.THREE.Scene();
+    scene.background = new this.runtime.THREE.Color(WEBGPU_BACKGROUND);
+    const roots: import("three").Object3D[] = [];
+    const layerRoots: Partial<Record<keyof MapLayers, import("three").Object3D>> = {};
+    const lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }> = [];
+
     const backgroundPlane = new this.runtime.THREE.Mesh(
       new this.runtime.THREE.PlaneGeometry(
         this.packet.metadata.imageWidth,
@@ -1708,8 +1859,7 @@ export class FantasyMapThreeRenderer {
       new this.runtime.THREE.MeshBasicMaterial({ color: WEBGPU_SURFACE }),
     );
     backgroundPlane.position.set(0, 0, -(this.packet.metadata.elevationScale + 32));
-    scene.add(backgroundPlane);
-    roots.push(backgroundPlane);
+    // backgroundPlane is added to scene via terrainBundle below
 
     const lightRig = buildTerrainLights(this.runtime, this.packet);
     scene.add(lightRig);
@@ -1717,10 +1867,12 @@ export class FantasyMapThreeRenderer {
 
     const terrainGeometry = buildTerrainGeometry(this.runtime, this.packet);
     if (!terrainGeometry) {
-      throw new Error("No terrain geometry available for WebGPU rendering");
+      // Packet binary data may have been released after a previous build.
+      // Return a minimal scene so callers don't crash.
+      return { scene, layerRoots, roots, lineMaterials };
     }
-
     const surfaceTextures = buildSurfaceTextures(this.runtime, this.packet);
+
     configureTextureForRenderer(surfaceTextures.terrainAlbedo, this.renderer);
     configureTextureForRenderer(surfaceTextures.height, this.renderer);
     configureTextureForRenderer(surfaceTextures.roughness, this.renderer);
@@ -1740,7 +1892,10 @@ export class FantasyMapThreeRenderer {
       ),
     );
     terrainMesh.renderOrder = 1;
+
+    scene.add(backgroundPlane);
     scene.add(terrainMesh);
+    roots.push(backgroundPlane);
     roots.push(terrainMesh);
 
     const waterMesh = buildOverlayPlane(
@@ -1945,6 +2100,7 @@ export class FantasyMapThreeRenderer {
     const terrainColor = mix(terrainColor3, snowColor, snowWeight);
     const slopeRockMixWeight = smoothstep(float(0.35), float(0.65), slopeValue);
     const slopeColor = mix(terrainColor, rockColor, slopeRockMixWeight.mul(float(0.7)));
+    // Per-pixel sin/cos detail computed on the GPU for full precision
     const macroDetail = sin(uv0.x.mul(float(30)).add(height.r.mul(float(6))))
       .mul(cos(uv0.y.mul(float(26)).sub(height.r.mul(float(5)))))
       .mul(float(0.5))
@@ -2000,6 +2156,28 @@ export class FantasyMapThreeRenderer {
     return material;
   }
 
+  private getOrCreateLineMaterial(
+    style: { color: number; opacity: number; linewidth: number; dashed: boolean },
+    worldUnits: boolean,
+  ) {
+    const key = `${style.color}-${style.linewidth}-${style.opacity}-${style.dashed}-${worldUnits}`;
+    let material = this.lineMaterialCache.get(key);
+    if (!material) {
+      material = new this.runtime!.Line2NodeMaterial({
+        color: style.color,
+        linewidth: style.linewidth,
+        worldUnits,
+        opacity: style.opacity,
+        dashed: style.dashed,
+        dashSize: 4 * this.packet!.metadata.drawScale,
+        gapSize: 5 * this.packet!.metadata.drawScale,
+      });
+      configureOverlayMaterial(material);
+      this.lineMaterialCache.set(key, material);
+    }
+    return material;
+  }
+
   private createLineGroup(
     packetPositions: Float32Array,
     style: { color: number; opacity: number; linewidth: number; dashed: boolean },
@@ -2011,17 +2189,9 @@ export class FantasyMapThreeRenderer {
     const positions = packetToThreeTriplets(packetPositions);
 
     const geometry = new this.runtime.LineSegmentsGeometry();
-    geometry.setPositions(positions);
+    geometry.setPositions(positions as unknown as number[]);
 
-    const material = new this.runtime.Line2NodeMaterial({
-      color: style.color,
-      linewidth: style.linewidth,
-      opacity: style.opacity,
-      dashed: style.dashed,
-      dashSize: 4 * this.packet!.metadata.drawScale,
-      gapSize: 5 * this.packet!.metadata.drawScale,
-    });
-    configureOverlayMaterial(material);
+    const material = this.getOrCreateLineMaterial(style, false);
     const line = new this.runtime.WebGPULineSegments2(geometry, material);
     if ("computeLineDistances" in line && typeof line.computeLineDistances === "function") {
       line.computeLineDistances();
@@ -2039,52 +2209,59 @@ export class FantasyMapThreeRenderer {
     const group = new this.runtime!.THREE.Group();
     let hasLines = false;
 
+    // First pass: count total segment floats to allocate one buffer
+    let totalSegmentFloats = 0;
+    for (let pathIndex = 0; pathIndex < layer.offsets.length - 1; pathIndex += 1) {
+      const start = layer.offsets[pathIndex] * 3;
+      const end = layer.offsets[pathIndex + 1] * 3;
+      const len = end - start;
+      if (len < 6) continue;
+      const pointCount = len / 3;
+      totalSegmentFloats += (pointCount - 1) * 6;
+    }
+
+    if (totalSegmentFloats === 0) return null;
+
+    // Second pass: fill merged buffer with Y/Z swap inlined (no intermediate arrays)
+    const mergedPositions = new Float32Array(totalSegmentFloats);
+    let offset = 0;
+    const src = layer.positions;
+    for (let pathIndex = 0; pathIndex < layer.offsets.length - 1; pathIndex += 1) {
+      const start = layer.offsets[pathIndex] * 3;
+      const end = layer.offsets[pathIndex + 1] * 3;
+      const len = end - start;
+      if (len < 6) continue;
+      const pointCount = len / 3;
+      for (let i = 0; i < pointCount - 1; i++) {
+        const si = start + i * 3;
+        const ni = start + (i + 1) * 3;
+        // Y/Z swap: packet [x, y, z] → Three.js [x, z, y]
+        mergedPositions[offset]     = src[si];
+        mergedPositions[offset + 1] = src[si + 2];
+        mergedPositions[offset + 2] = src[si + 1];
+        mergedPositions[offset + 3] = src[ni];
+        mergedPositions[offset + 4] = src[ni + 2];
+        mergedPositions[offset + 5] = src[ni + 1];
+        offset += 6;
+      }
+    }
+
+    // Create one batched draw call per style (reuse same position data)
     for (const style of styles) {
-      const styleGroup = new this.runtime!.THREE.Group();
+      const geometry = new this.runtime!.LineSegmentsGeometry();
+      geometry.setPositions(mergedPositions as unknown as number[]);
 
-      for (let pathIndex = 0; pathIndex < layer.offsets.length - 1; pathIndex += 1) {
-        const positions = pathPositionSlice(layer, pathIndex);
-        const pathLine = this.createPolyline(positions, style, lineMaterials);
-        if (!pathLine) continue;
-        styleGroup.add(pathLine);
-        hasLines = true;
+      const material = this.getOrCreateLineMaterial(style, true);
+      const line = new this.runtime!.WebGPULineSegments2(geometry, material);
+      if ("computeLineDistances" in line && typeof line.computeLineDistances === "function") {
+        line.computeLineDistances();
       }
-
-      if (styleGroup.children.length > 0) {
-        group.add(styleGroup);
-      }
+      group.add(line);
+      lineMaterials.push(material);
+      hasLines = true;
     }
 
     return hasLines ? group : null;
-  }
-
-  private createPolyline(
-    packetPositions: Float32Array,
-    style: { color: number; opacity: number; linewidth: number; dashed: boolean },
-    lineMaterials: Array<{ resolution?: import("three").Vector2; linewidth?: number }>,
-  ) {
-    if (!this.runtime || packetPositions.length < 6) return null;
-
-    const positions = packetToThreeTriplets(packetPositions);
-    const geometry = new this.runtime.LineGeometry();
-    geometry.setPositions(positions);
-
-    const material = new this.runtime.Line2NodeMaterial({
-      color: style.color,
-      linewidth: style.linewidth,
-      worldUnits: true,
-      opacity: style.opacity,
-      dashed: style.dashed,
-      dashSize: 4 * this.packet!.metadata.drawScale,
-      gapSize: 5 * this.packet!.metadata.drawScale,
-    });
-    configureOverlayMaterial(material);
-    const line = new this.runtime.WebGPULine2(geometry, material);
-    if ("computeLineDistances" in line && typeof line.computeLineDistances === "function") {
-      line.computeLineDistances();
-    }
-    lineMaterials.push(material);
-    return line;
   }
 
   private createMarkerMaterial(fillColor: number) {
@@ -2186,101 +2363,221 @@ export class FantasyMapThreeRenderer {
     const group = new this.runtime!.THREE.Group();
     const anchors = packetToThreeTriplets(this.packet!.labels.anchors);
     const items = this.packet!.labels.items;
+    const { THREE } = this.runtime!;
+
+    const pixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+
+    // Phase 1: Measure all labels to determine atlas layout
+    interface LabelEntry {
+      index: number;
+      text: string;
+      fontface: string;
+      fontsize: number;
+      logicalWidth: number;
+      logicalHeight: number;
+      drawX: number;
+      drawY: number;
+      font: string;
+      haloWidth: number;
+      offsetX: number;
+      offsetY: number;
+    }
+    const entries: LabelEntry[] = [];
+
+    const measureCanvas = document.createElement("canvas");
+    measureCanvas.width = 1;
+    measureCanvas.height = 1;
+    const measureCtx = measureCanvas.getContext("2d")!;
 
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
       if (!item?.text) continue;
-      const anchorIndex = index * 3;
-      const { mesh, offsetX, offsetY } = this.createLabelMesh(
-        item.text,
-        item.fontface,
-        item.fontsize,
-      );
-      mesh.position.set(
-        anchors[anchorIndex] + offsetX,
-        anchors[anchorIndex + 1] + offsetY,
-        anchors[anchorIndex + 2] + LABEL_Z_OFFSET,
-      );
-      group.add(mesh);
+
+      const fontSize = Math.max(1, item.fontsize);
+      const haloWidth = Math.max(3, Math.round(fontSize * 0.12));
+      const padding = Math.max(4, Math.round(fontSize * 0.24));
+      const font = `${fontSize}px ${resolveLabelFontFamily(item.fontface)}`;
+
+      measureCtx.font = font;
+      measureCtx.textAlign = "left";
+      measureCtx.textBaseline = "alphabetic";
+
+      const metrics = measureCtx.measureText(item.text);
+      const left = metrics.actualBoundingBoxLeft || 0;
+      const right = metrics.actualBoundingBoxRight || metrics.width || fontSize;
+      const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.78;
+      const descent = metrics.actualBoundingBoxDescent || fontSize * 0.22;
+      const logicalWidth = Math.max(1, Math.ceil(left + right + padding * 2 + haloWidth * 2));
+      const logicalHeight = Math.max(1, Math.ceil(ascent + descent + padding * 2 + haloWidth * 2));
+      const drawX = padding + haloWidth + left;
+      const drawY = padding + haloWidth + ascent;
+
+      entries.push({
+        index,
+        text: item.text,
+        fontface: item.fontface,
+        fontsize: item.fontsize,
+        logicalWidth,
+        logicalHeight,
+        drawX,
+        drawY,
+        font,
+        haloWidth,
+        offsetX: logicalWidth * 0.5 - drawX,
+        offsetY: drawY - logicalHeight * 0.5,
+      });
     }
 
-    return group;
-  }
+    if (entries.length === 0) return group;
 
-  private createLabelMesh(text: string, fontface: string, fontsize: number) {
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Failed to create label canvas context");
+    // Phase 2: Pack labels into atlas rows (simple shelf packing)
+    const maxAtlasSize = 4096;
+    let atlasWidth = 0;
+    let atlasHeight = 0;
+    const placements: Array<{ x: number; y: number }> = [];
+    let rowX = 0;
+    let rowY = 0;
+    let rowHeight = 0;
+
+    for (const entry of entries) {
+      const pw = Math.ceil(entry.logicalWidth * pixelRatio);
+      const ph = Math.ceil(entry.logicalHeight * pixelRatio);
+
+      if (rowX + pw > maxAtlasSize) {
+        // Move to next row
+        rowY += rowHeight;
+        rowX = 0;
+        rowHeight = 0;
+      }
+
+      placements.push({ x: rowX, y: rowY });
+      rowX += pw;
+      rowHeight = Math.max(rowHeight, ph);
+      atlasWidth = Math.max(atlasWidth, rowX);
+    }
+    atlasHeight = rowY + rowHeight;
+
+    // Round up to power-of-two friendly sizes (not required but GPU-friendly)
+    atlasWidth = Math.min(maxAtlasSize, atlasWidth);
+    atlasHeight = Math.min(maxAtlasSize, atlasHeight);
+
+    // Phase 3: Render all labels onto atlas canvas
+    const atlasCanvas = document.createElement("canvas");
+    atlasCanvas.width = atlasWidth;
+    atlasCanvas.height = atlasHeight;
+    const atlasCtx = atlasCanvas.getContext("2d")!;
+    atlasCtx.clearRect(0, 0, atlasWidth, atlasHeight);
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const placement = placements[i];
+
+      atlasCtx.save();
+      atlasCtx.translate(placement.x, placement.y);
+      atlasCtx.scale(pixelRatio, pixelRatio);
+
+      atlasCtx.font = entry.font;
+      atlasCtx.textAlign = "left";
+      atlasCtx.textBaseline = "alphabetic";
+      atlasCtx.lineJoin = "round";
+      atlasCtx.miterLimit = 2;
+      atlasCtx.strokeStyle = `#${LABEL_HALO_COLOR.toString(16).padStart(6, "0")}`;
+      atlasCtx.fillStyle = `#${LABEL_COLOR.toString(16).padStart(6, "0")}`;
+      atlasCtx.lineWidth = entry.haloWidth;
+      atlasCtx.strokeText(entry.text, entry.drawX, entry.drawY);
+      atlasCtx.fillText(entry.text, entry.drawX, entry.drawY);
+
+      atlasCtx.restore();
     }
 
-    const pixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-    const fontSize = Math.max(1, fontsize);
-    const haloWidth = Math.max(3, Math.round(fontSize * 0.12));
-    const padding = Math.max(4, Math.round(fontSize * 0.24));
-    const font = `${fontSize}px ${resolveLabelFontFamily(fontface)}`;
+    // Phase 4: Create shared atlas texture
+    const atlasTexture = new THREE.CanvasTexture(atlasCanvas);
+    atlasTexture.colorSpace = THREE.SRGBColorSpace;
+    atlasTexture.minFilter = THREE.LinearFilter;
+    atlasTexture.magFilter = THREE.LinearFilter;
+    atlasTexture.generateMipmaps = false;
+    atlasTexture.needsUpdate = true;
 
-    context.font = font;
-    context.textAlign = "left";
-    context.textBaseline = "alphabetic";
+    // Phase 5: Build merged geometry with per-label UVs
+    const vertCount = entries.length * 4; // 4 vertices per quad
+    const triCount = entries.length * 2;  // 2 triangles per quad
+    const positions = new Float32Array(vertCount * 3);
+    const uvs = new Float32Array(vertCount * 2);
+    const indices = new Uint32Array(triCount * 3);
 
-    const metrics = context.measureText(text);
-    const left = metrics.actualBoundingBoxLeft || 0;
-    const right = metrics.actualBoundingBoxRight || metrics.width || fontSize;
-    const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.78;
-    const descent = metrics.actualBoundingBoxDescent || fontSize * 0.22;
-    const logicalWidth = Math.max(1, Math.ceil(left + right + padding * 2 + haloWidth * 2));
-    const logicalHeight = Math.max(1, Math.ceil(ascent + descent + padding * 2 + haloWidth * 2));
-    const drawX = padding + haloWidth + left;
-    const drawY = padding + haloWidth + ascent;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const placement = placements[i];
+      const anchorIndex = entry.index * 3;
+      const cx = anchors[anchorIndex] + entry.offsetX;
+      const cy = anchors[anchorIndex + 1] + entry.offsetY;
+      const cz = anchors[anchorIndex + 2] + LABEL_Z_OFFSET;
+      const hw = entry.logicalWidth * 0.5;
+      const hh = entry.logicalHeight * 0.5;
 
-    canvas.width = Math.ceil(logicalWidth * pixelRatio);
-    canvas.height = Math.ceil(logicalHeight * pixelRatio);
+      // Quad vertices (centered at label position)
+      const vi = i * 4;
+      // bottom-left
+      positions[(vi) * 3] = cx - hw;
+      positions[(vi) * 3 + 1] = cy - hh;
+      positions[(vi) * 3 + 2] = cz;
+      // bottom-right
+      positions[(vi + 1) * 3] = cx + hw;
+      positions[(vi + 1) * 3 + 1] = cy - hh;
+      positions[(vi + 1) * 3 + 2] = cz;
+      // top-right
+      positions[(vi + 2) * 3] = cx + hw;
+      positions[(vi + 2) * 3 + 1] = cy + hh;
+      positions[(vi + 2) * 3 + 2] = cz;
+      // top-left
+      positions[(vi + 3) * 3] = cx - hw;
+      positions[(vi + 3) * 3 + 1] = cy + hh;
+      positions[(vi + 3) * 3 + 2] = cz;
 
-    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    context.clearRect(0, 0, logicalWidth, logicalHeight);
-    context.font = font;
-    context.textAlign = "left";
-    context.textBaseline = "alphabetic";
-    context.lineJoin = "round";
-    context.miterLimit = 2;
-    context.strokeStyle = `#${LABEL_HALO_COLOR.toString(16).padStart(6, "0")}`;
-    context.fillStyle = `#${LABEL_COLOR.toString(16).padStart(6, "0")}`;
-    context.lineWidth = haloWidth;
-    context.strokeText(text, drawX, drawY);
-    context.fillText(text, drawX, drawY);
+      // UVs mapped to atlas region
+      const pw = Math.ceil(entry.logicalWidth * pixelRatio);
+      const ph = Math.ceil(entry.logicalHeight * pixelRatio);
+      const u0 = placement.x / atlasWidth;
+      const u1 = (placement.x + pw) / atlasWidth;
+      const v0 = 1.0 - (placement.y + ph) / atlasHeight; // flip Y for texture
+      const v1 = 1.0 - placement.y / atlasHeight;
 
-    const texture = new this.runtime!.THREE.CanvasTexture(canvas);
-    texture.colorSpace = this.runtime!.THREE.SRGBColorSpace;
-    texture.minFilter = this.runtime!.THREE.LinearFilter;
-    texture.magFilter = this.runtime!.THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    texture.needsUpdate = true;
+      uvs[vi * 2] = u0;       uvs[vi * 2 + 1] = v0;
+      uvs[(vi + 1) * 2] = u1; uvs[(vi + 1) * 2 + 1] = v0;
+      uvs[(vi + 2) * 2] = u1; uvs[(vi + 2) * 2 + 1] = v1;
+      uvs[(vi + 3) * 2] = u0; uvs[(vi + 3) * 2 + 1] = v1;
 
-    const geometry = new this.runtime!.THREE.PlaneGeometry(logicalWidth, logicalHeight);
+      // Indices
+      const ti = i * 6;
+      indices[ti] = vi;
+      indices[ti + 1] = vi + 1;
+      indices[ti + 2] = vi + 2;
+      indices[ti + 3] = vi;
+      indices[ti + 4] = vi + 2;
+      indices[ti + 5] = vi + 3;
+    }
 
-    // TSL-based label material
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    // Single material for all labels
     const { MeshBasicNodeMaterial, TSL } = this.runtime!;
-    const { texture: tslTexture, uv } = TSL;
-
-    const uv0 = uv();
-    const labelTexture = tslTexture(texture, uv0);
+    const { texture: tslTexture, uv: tslUv } = TSL;
 
     const material = new MeshBasicNodeMaterial();
-    material.colorNode = labelTexture;
+    material.colorNode = tslTexture(atlasTexture, tslUv());
     material.transparent = true;
     material.depthTest = false;
     material.depthWrite = false;
     material.toneMapped = false;
 
-    const mesh = new this.runtime!.THREE.Mesh(geometry, material);
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.renderOrder = 40;
+    group.add(mesh);
 
-    return {
-      mesh,
-      offsetX: logicalWidth * 0.5 - drawX,
-      offsetY: drawY - logicalHeight * 0.5,
-    };
+    return group;
   }
 
   private applyLayerVisibility(
@@ -2308,6 +2605,13 @@ export class FantasyMapThreeRenderer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  private getPreviewTextureDimensions() {
+    const pixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+    const width = this.stage.clientWidth || this.packet?.metadata.imageWidth || 1;
+    const height = this.stage.clientHeight || this.packet?.metadata.imageHeight || 1;
+    return clampPreviewTextureSize(width * pixelRatio, height * pixelRatio);
+  }
+
   private applySvgViewportTransform() {
     if (!this.camera || !this.packet) {
       return;
@@ -2333,7 +2637,8 @@ export class FantasyMapThreeRenderer {
   }
 
   private async buildMapSvgMarkup() {
-    if (!this.packet?.svgMapJson) {
+    const svgJson = this.packet ? getSvgMapJson(this.packet) : undefined;
+    if (!svgJson) {
       throw new Error("SVG mode requires exported map JSON data");
     }
 
@@ -2375,7 +2680,7 @@ export class FantasyMapThreeRenderer {
       const request: SvgBuildWorkerRequest = {
         type: "build-svg",
         requestId,
-        mapJson: this.packet!.svgMapJson,
+        mapJson: getSvgMapJson(this.packet!)!,
         layers: { ...this.layers },
       };
       worker.postMessage(request);
