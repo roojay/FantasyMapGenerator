@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>Fantasy Map Generator</title>
+    <meta
+      name="description"
+      content="Procedural fantasy map generator demo built with React, TypeScript, Tailwind CSS, Mantine and Vite."
+    />
+    <script>
+      (() => {
+        const stored = window.localStorage.getItem("fantasy-map-color-scheme");
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const scheme =
+          stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light";
+        document.documentElement.setAttribute("data-mantine-color-scheme", scheme);
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-B-Az2zYJ.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/react-vendor-Tbk58cWh.js">
+    <link rel="modulepreload" crossorigin href="./assets/ui-vendor--fjXXbQD.js">
+    <link rel="stylesheet" crossorigin href="./assets/ui-vendor-DJIbK2Oo.css">
+    <link rel="stylesheet" crossorigin href="./assets/index-BfGfgxCF.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
