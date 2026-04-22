@@ -1,0 +1,76 @@
+name: Deploy Rust Web Example
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "rust/**"
+      - ".github/workflows/deploy-rust-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-rust-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: rust/examples/pnpm-lock.yaml
+
+      - name: Make build script executable
+        run: chmod +x rust/build-wasm.sh
+
+      - name: Build Rust WASM package
+        working-directory: rust
+        run: ./build-wasm.sh
+
+      - name: Install web example dependencies
+        working-directory: rust/examples
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web example
+        working-directory: rust/examples
+        env:
+          VITE_BASE_PATH: ./
+        run: pnpm build
+
+      - name: Prepare GitHub Pages artifact
+        run: touch rust/examples/dist/.nojekyll
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./rust/examples/dist
+          force_orphan: true

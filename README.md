@@ -7,6 +7,11 @@
 
 ## 🎯 What's New in This Fork
 
+### 🔗 Live Demo
+
+- GitHub Pages: [https://roojay.github.io/FantasyMapGenerator/](https://roojay.github.io/FantasyMapGenerator/)
+- The site is deployed automatically from `rust/examples/dist` to the `gh-pages` branch when changes under `rust/` are pushed to `master`
+
 ### ✨ Major Enhancements
 
 1. **🦀 Rust Implementation**
@@ -46,6 +51,10 @@ cd rust/examples
 npx serve
 # Open browser to displayed URL
 ```
+
+**Browser (GitHub Pages)**
+
+Open: [https://roojay.github.io/FantasyMapGenerator/](https://roojay.github.io/FantasyMapGenerator/)
 
 **Rust CLI**
 ```bash
